@@ -46,16 +46,16 @@ int main(int argc, char **argv)
     while((num = read(fd, buf, 4)) < 1);
     printf("Theta: %d ", buf[0]);
     
-    while(num = read(fd, buf, 1)) < 1);
+    while((num = read(fd, buf, 1)) < 1);
     printf("Gyro: %d ", buf[0]);
     
-    while(num = read(fd, buf, 1)) < 1);
+    while((num = read(fd, buf, 1)) < 1);
     printf("PotBrads: %d ", buf[0]);
     
-    while(num = read(fd, buf, 1)) < 1);
+    while((num = read(fd, buf, 1)) < 1);
     printf("PotValue: %d ", buf[0]);
     
-    while(num = read(fd, buf, 1)) < 1);
+    while((num = read(fd, buf, 1)) < 1);
     printf("RSR: 0x%02x\n", buf[0]);
 
     usleep(26000);
