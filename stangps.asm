@@ -21,6 +21,8 @@
 * 02/11/03 David Flowerday      Change light sensor distance to 16 bit fraction
 * 02/19/03 David Flowerday      Changed direction of light sensors due to
 *                               hardware change
+* 02/24/03 David Flowerday      Added additional datasets which can be
+*                               requested using different command bytes
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -69,7 +71,11 @@ GYRO_NDEGS_HIGH         EQU $23
 GYRO_NDEGS_LOW          EQU $1F
 
 ; Serial Communications Constants
-CC_ATTENTION_BYTE       EQU 180t
+REQ_XYTHETA             EQU 180t
+REQ_THETA_ONLY          EQU 181t
+REQ_GET_WAYPT           EQU 182t
+REQ_SET_WAYPT           EQU 183t
+REQ_EVERYTHING          EQU 184t
 
 **************************************************************
 **************************************************************
@@ -128,6 +134,10 @@ PotValue:
 AbsHeading:
         ds $01
 PotBrads:
+        ds $01
+ResetStatus:
+        ds $01
+RCCurrentWaypt:
         ds $01
 
 **************************************************************
@@ -299,6 +309,7 @@ InitSCI:
 **************************************************************
 InitRAM:
         lda SRSR                ; Read Reset Status Register
+        sta ResetStatus
         sta PORTA
         and #%11000110          ; Check for a reason that would invalidate RAM
         beq InitRAMDone         ; RAM should still be good, don't initialize
@@ -327,6 +338,7 @@ InitRAM:
         mov #0,GyroCenter
         mov #0,{GyroCenter+1}
         mov #0,PotValue
+        mov #0,RCCurrentWaypt
         lda PHOTO_SENSOR_PORT
         and #$03
         asla
@@ -839,56 +851,111 @@ GyroDone:
         rti
 
 **************************************************************
-* RCRequestIsr - used when the Robot Controller requests a
-*                positioning update
+* DataRequestIsr - used when the Robot Controller requests a
+*                  positioning update
 **************************************************************
-RCRequestIsr:
+DataRequestIsr:
+        mov #$00,T2MODH
+        mov #$13,T2MODL         ; Set up for .5 ms timeout
         lda PORTA               ; Read the LED states
         eor #$01                ; Toggle the lowest bit
-;        sta PORTA               ; Change the display
+        sta PORTA               ; Change the display
         jsr GetByte             ; Read the byte that was sent to us
-        cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
-        bne RCRequestDone       ; Not for us - ignore it
-        lda PORTA               ; Read the LED states
-        eor #$04                ; Toggle the lowest bit
-;        sta PORTA               ; Change the display
+        cmp #REQ_XYTHETA        ; Compare to X, Y, theta request
+        beq XYThetaRequest      ; Request for X, Y, and Theta information
+        cmp #REQ_THETA_ONLY     ; Compare to theta only request
+        beq ThetaRequest
+        cmp #REQ_GET_WAYPT      ; Request to retrieve current waypoint
+        beq GetWaypoint
+        cmp #REQ_SET_WAYPT      ; Request to set current waypoint
+        beq SetWaypoint
+        cmp #REQ_EVERYTHING     ; Send back everything we know
+        beq AllRequest
+DataRequestDone:
+        rti
 
-        ; Sleep for some time before responding
-        mov #$00,T2MODH
-        mov #$13,T2MODL         ; Set up for ?? second timeout
+XYThetaRequest:
+        ; Sleep for some time before continuing so RC doesn't get swamped
         mov #$06,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
-
-        ; RC has requested that we send position data, so we'll
-        ; do just that
         lda {AbsoluteX+1}       ; Load LSB of integer portion of X
         brclr 7,{AbsoluteX+2},NoIncX
         inca
 NoIncX:
         jsr SendByte            ; Send it out
-
+        ; Sleep for some time before continuing so RC doesn't get swamped
         mov #$06,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
-
         lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
         brclr 7,{AbsoluteX+2},NoIncY
         inca
 NoIncY:
         jsr SendByte            ; Send it out
-
+ThetaRequest:                   ; Label used if only theta is requested
+        lda PORTA               ; Read the LED states
+        eor #$04                ; Toggle the lowest bit
+        sta PORTA               ; Change the display
+        ; Sleep for some time before continuing so RC doesn't get swamped
         mov #$06,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
-
         lda RobotTheta          ; Load LSB of integer portion of Theta
         brclr 7,{RobotTheta+1},NoIncTheta
         inca
 NoIncTheta:
         jsr SendByte            ; Send it out
-RCRequestDone:
-        rti
+        bra DataRequestDone     ; All done
+
+GetWaypoint:
+        ; Sleep for some time before continuing so RC doesn't get swamped
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+        lda RCCurrentWaypt      ; Load RC's current waypoint
+        jsr SendByte            ; Send it out
+        bra DataRequestDone     ; All done
+        
+SetWaypoint:
+        jsr GetByte             ; Read in waypoint # from RC
+        sta RCCurrentWaypt      ; Store it in our RAM
+        bra DataRequestDone     ; All done
+        
+AllRequest:
+        lda AbsoluteX
+        jsr SendByte
+        lda {AbsoluteX+1}
+        jsr SendByte
+        lda {AbsoluteX+2}
+        jsr SendByte
+        lda {AbsoluteX+3}
+        jsr SendByte
+        lda AbsoluteY
+        jsr SendByte
+        lda {AbsoluteY+1}
+        jsr SendByte
+        lda {AbsoluteY+2}
+        jsr SendByte
+        lda {AbsoluteY+3}
+        jsr SendByte
+        lda RobotTheta
+        jsr SendByte
+        lda {RobotTheta+1}
+        jsr SendByte
+        lda {RobotTheta+2}
+        jsr SendByte
+        lda {RobotTheta+3}
+        jsr SendByte
+        lda GyroValue
+        jsr SendByte
+        lda PotBrads
+        jsr SendByte
+        lda PotValue
+        jsr SendByte
+        lda ResetStatus
+        jsr SendByte
+        bra DataRequestDone     ; All done
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
