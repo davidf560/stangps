@@ -40,10 +40,10 @@ ADC_ENABLE              EQU $00
 
 ; Potentiometer Constants
 POT_CENTER_VAL          EQU 129t
-POT_MAX_RIGHT_VAL       EQU 58t
-POT_MAX_OFFSET          EQU 64t
-BRADS_PER_TICK_H        EQU 0t
-BRADS_PER_TICK_L        EQU 231t
+POT_MAX_RIGHT_VAL       EQU 10t
+POT_MAX_OFFSET          EQU 128t
+BRADS_PER_TICK_H        EQU 1t
+BRADS_PER_TICK_L        EQU 22t
 
 ; Gyroscope Constants
 ; First set is for 64 degs/sec gyro
@@ -116,6 +116,8 @@ GyroLoopCount:
 PotValue:
         ds $01
 AbsHeading:
+        ds $01
+PotBrads:
         ds $01
 
 **************************************************************
@@ -544,6 +546,7 @@ ReadPot:
         sta ADSCR               ; Start an ADC conversion on the pot chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
+        sta PotValue            ; Store in RAM
         cli
         sub #POT_MAX_RIGHT_VAL
         sta {TempWord1+1}       ; Prepare for multiply
@@ -555,7 +558,7 @@ ReadPot:
         jsr UMult16             ; Multiply
         lda {TempLWord+2}       ; Load crab brads into A
         sub #POT_MAX_OFFSET     ; Convert back to straight ahead = 0 brads
-        sta PotValue            ; Store in RAM
+        sta PotBrads            ; Store in RAM
         rts
 
 **************************************************************
