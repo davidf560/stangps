@@ -826,10 +826,10 @@ GetByte:
         rts
 
 **************************************************************
-* GetByteWithTimeout - Get byte and return it in accumulator
-*                      Wait only for 2 milliseconds before
-*                      giving up.  If we timeout, set the
-*                      carry bit to indicate error.
+* GetByteWithTimeout - Get byte and return it in accumulator.
+*                      If 2 milliseconds passes before a byte
+*                      is received, carry bit is set to
+*                      indicate error and function returns.
 **************************************************************
 GetByteWithTimeout:
         mov #$00,T2MODH
@@ -839,7 +839,8 @@ GetByteTimeoutLoop:
         brset 5,SCS1,GotByte    ; Check for received waypoint byte
         brclr 7,T2SC,GetByteTimeoutLoop
         ; At this point we did not receive the byte in time
-        sec                     ; No byte received so set carry bit
+        mov #$36,T2SC           ; Reset Timer 1
+        sec                     ; Set carry bit to indicate timeout
         lda LED_PORT
         eor #LED_GETB_TIMEOUT
         sta LED_PORT
@@ -847,7 +848,7 @@ GetByteTimeoutLoop:
 GotByte:
         mov #$36,T2SC           ; Reset Timer 1
         lda SCDR
-        clc                     ; Clear carry bit to indicate no timeout
+        clc
         rts
 
 **************************************************************
@@ -989,15 +990,15 @@ GyroDone:
 **************************************************************
 SetPositionRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        bcs RCRequestDone       ; GetByte timed out, so don't store X
         sta {AbsoluteX+1}
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for another byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        bcs RCRequestDone       ; GetByte timed out, so don't store Y
         sta {AbsoluteY+1}
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for last byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        bcs RCRequestDone       ; GetByte timed out, so don't store Theta
         sta RobotTheta
-        mov #$FF,PosInitialized ; Indicate that our position has been inited
+        mov #$FF,PosInitialized ; Indicate that our position has been initialized
         lda LED_PORT            ; Signal by an LED that we're linked up
         eor #LED_XYT_RECVD
         sta LED_PORT
@@ -1028,7 +1029,6 @@ NoExtendedCmds:
         lda LED_PORT            ; Toggle the UNKNOWN_CMD LED
         eor #LED_UNKNOWN_CMD
         sta LED_PORT
-
 RCRequestDone:
         lda SCS1                ; Flush receive buffer
         lda SCDR
@@ -1036,7 +1036,7 @@ RCRequestDone:
 
 SetWayptRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        bcs RCRequestDone       ; GetByte timed out, so don't store waypoint
         sta RCCurrentWaypt      ; Store current waypoint
         bra RCRequestDone
 
@@ -1044,6 +1044,8 @@ GetWayptRequest:
         ; Sleep for some time before responding
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
         lda RCCurrentWaypt      ; Load currently stored waypoint number
         jsr SendByte            ; Send it out
         bra RCRequestDone
@@ -1052,10 +1054,12 @@ XRequest:
         ; Sleep for some time before responding
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        ; Check to see if the number we're sending to the RC has rolled over.
-        ; If so, just keep sending back 0 or 255 as appropriate.
-        lda AbsoluteX
-        cmp #127t               ; Check to see if AbsoluteX+1 has rolled over
+        mov #$36,T2SC           ; Reset Timer 1
+        ; Check to see if the byte we're sending to the RC has rolled
+        ; over.  If so just keep sending them the same value so they
+        ; don't think they jumped to the other side of the field.
+        lda AbsoluteX           ; Load MSB of integer of X
+        cmp #127t               ; See if LSB has rolled over
         beq XNoRollover
         blo SendZero
         bhi Send255
@@ -1063,22 +1067,25 @@ XNoRollover:
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        ; Now round the integer that we'll be sending to the RC
-        ; and send it out
+        ; Prepare byte to send to RC by rounding the lower byte of our
+        ; whole number position.
         lda {AbsoluteX+1}       ; Load LSB of integer portion of X
         ldx {AbsoluteX+2}       ; Load MSB of fraction portion of X
-        aslx                    ; Move MSB of X into carry bit
-        adc #0                  ; Add carry bit to A
+        aslx                    ; Shift MSB of fraction into carry bit
+        adc #0                  ; Add carry bit (in order to round)
         jsr SendByte            ; Send it out
         bra RCRequestDone
 
 YRequest:
+        ; Sleep for some time before responding
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        ; Check to see if the number we're sending to the RC has rolled over.
-        ; If so, just keep sending back 0 or 255 as appropriate.
-        lda AbsoluteY
-        cmp #127t               ; Check to see if AbsoluteY+1 has rolled over
+        mov #$36,T2SC           ; Reset Timer 1
+        ; Check to see if the byte we're sending to the RC has rolled
+        ; over.  If so just keep sending them the same value so they
+        ; don't think they jumped to the other side of the field.
+        lda AbsoluteY           ; Load MSB of integer of Y
+        cmp #127t               ; See if LSB has rolled over
         beq YNoRollover
         blo SendZero
         bhi Send255
@@ -1086,39 +1093,40 @@ YNoRollover:
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        ; Now round the integer that we'll be sending to the RC
-        ; and send it out
+        ; Prepare byte to send to RC by rounding the lower byte of our
+        ; whole number position.
         lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
         ldx {AbsoluteY+2}       ; Load MSB of fraction portion of Y
-        aslx                    ; Move MSB of X into carry bit
-        adc #0                  ; Add carry bit to A
+        aslx                    ; Shift MSB of fraction into carry bit
+        adc #0                  ; Add carry bit (in order to round)
         jsr SendByte            ; Send it out
         bra RCRequestDone
 
 ThetaRequest:
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        ; Now round the integer that we'll be sending to the RC
-        ; and send it out
+
         lda RobotTheta          ; Load LSB of integer portion of Theta
-        ldx {RobotTheta+1}
-        aslx                    ; Move MSB of X into carry bit
-        adc #0                  ; Add carry bit to A
+        ldx {RobotTheta+1}      ; Load MSB of fraction portion of Theta
+        aslx                    ; Shift MSB of fraction into carry bit
+        adc #0                  ; Add carry bit (in order to round)
         jsr SendByte            ; Send it out
         bra RCRequestDone
 
 SendZero:
         lda #0t
         jsr SendByte
-        bra RCRequestDone
+        jmp RCRequestDone
 
 Send255:
         lda #255t
         jsr SendByte
-        bra RCRequestDone
+        jmp RCRequestDone
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
