@@ -246,6 +246,55 @@ QError:
 **************************************************************
 
 **************************************************************
+* InitPorts - Initializes all I/O ports and sets appropriate
+*             pullup enable registers
+**************************************************************
+InitPorts:
+        mov #$FF,DDRA           ; Port A is all outputs (LEDs)
+        mov #$00,LED_PORT       ; Initialize all LEDs to off
+        mov #$00,DDRD           ; Port D is all inputs
+        mov #$03,PTDPUE         ; Enable pullup on D0 and D1
+        rts
+
+**************************************************************
+* InitSCI - Turns on the asyncronous communications port
+*           for TX, RX at specified baud N81
+**************************************************************
+InitSCI:
+        lda SCS1
+        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
+        mov #$40,SCC1           ; Enable the SCI peripheral
+        mov #$2C,SCC2           ; Enable the SCI for TX and RX
+        mov #$00,SCC3           ; No SCC error interrupts, please
+        rts
+
+**************************************************************
+* InitADC - Initializes the Analog to Digital Converter
+**************************************************************
+InitADC:
+        mov #$60,ADCLK          ; Select external clock, divided by 8
+        rts
+
+**************************************************************
+* CheckRSR - Checks the Reset Status Register and sets
+*            the Carry Bit if a warm reset is appropriate
+**************************************************************
+CheckRSR:
+        lda SRSR                ; Read Reset Status Register
+        sta ResetStatus         ; Store for later
+        and #%11000110          ; Check for a reason that would invalidate RAM
+        bne NoWarmReset         ; Branch if RAM is invalid
+        lda LED_PORT            ; Load state of LEDs
+        eor #LED_WARM_RESET     ; Set Warm Reset LED bit
+        sta LED_PORT            ; Write changes back to LED display
+        sec                     ; Set Carry bit to indicate warm reset possible
+        bra CheckRSRDone
+NoWarmReset:
+        clc                     ; Clear Carry bit to indicate no warm reset
+CheckRSRDone:
+        rts
+
+**************************************************************
 * InitWait - Just wait for a period of time and display a
 *            countdown sequence on the LEDs
 *            (this is used to allow the gyro to stablize
@@ -269,81 +318,6 @@ ContinueWait:
         bra ContinueWait
 InitWaitDone:
         clr LED_PORT            ; Turn off all LEDs
-        rts
-
-
-**************************************************************
-* InitADC - Initializes the Analog to Digital Converter
-**************************************************************
-InitADC:
-        mov #$60,ADCLK          ; Select external clock, divided by 8
-        rts
-
-**************************************************************
-* InitGyroTimer - Initializes the gyro timer (timer 1)
-**************************************************************
-InitGyroTimer:
-        mov #$00,T1MODH
-        mov #$26,T1MODL         ; Set up for ~1ms interrupts
-        mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
-        rts
-
-**************************************************************
-* InitGyro - Determines gyro center and allows gyro to
-*            settle down before continuing
-**************************************************************
-InitGyro:
-        mov #$FF,LED_PORT       ; Light up all LEDs to signal sampling of gyro
-        clrx                    ; Clear the index register
-        lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
-        ora #ADC_ENABLE         ; Set the enable bit
-        sta ADSCR               ; Start an ADC conversion on the gyro chanel
-        brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
-        lda ADR                 ; Read ADC value
-        add {GyroCenter+1}      ; Add to our running total (LSB)
-        sta {GyroCenter+1}      ; Store to LSB
-        clra
-        adc GyroCenter          ; Add to our running total (MSB)
-        sta GyroCenter          ; Store to MSB
-        incx
-        cpx #$00                ; See if we've taken 256 samples yet
-        bne FindGyroCenter      ; Take another sample
-        ; Done sampling, now average
-        brclr 7,GyroCenter,NoRound
-        inc GyroCenter          ; Round up because MSB of lower byte was set
-NoRound:
-        clr LED_PORT            ; Turn off the LEDs to indicate center found
-        rts
-
-**************************************************************
-* InitSCI - Turns on the asyncronous communications port
-*           for TX, RX at specified baud N81
-**************************************************************
-InitSCI:
-        lda SCS1
-        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
-        mov #$40,SCC1           ; Enable the SCI peripheral
-        mov #$2C,SCC2           ; Enable the SCI for TX and RX
-        mov #$00,SCC3           ; No SCC error interrupts, please
-        rts
-
-**************************************************************
-* CheckRSR - Checks the Reset Status Register and sets
-*            the Carry Bit if a warm reset is appropriate
-**************************************************************
-CheckRSR:
-        lda SRSR                ; Read Reset Status Register
-        sta ResetStatus         ; Store for later
-        and #%11000110          ; Check for a reason that would invalidate RAM
-        bne NoWarmReset         ; Branch if RAM is invalid
-        lda LED_PORT            ; Load state of LEDs
-        eor #LED_WARM_RESET     ; Set Warm Reset LED bit
-        sta LED_PORT            ; Write changes back to LED display
-        sec                     ; Set Carry bit to indicate warm reset possible
-        bra CheckRSRDone
-NoWarmReset:
-        clc                     ; Clear Carry bit to indicate no warm reset
-CheckRSRDone:
         rts
 
 **************************************************************
@@ -387,155 +361,39 @@ InitRAM:
         rts
 
 **************************************************************
-* InitPorts - Initializes all I/O ports and sets appropriate
-*             pullup enable registers
+* InitGyro - Determines gyro center and allows gyro to
+*            settle down before continuing
 **************************************************************
-InitPorts:
-        mov #$FF,DDRA           ; Port A is all outputs (LEDs)
-        mov #$00,LED_PORT       ; Initialize all LEDs to off
-        mov #$00,DDRD           ; Port D is all inputs
-        mov #$03,PTDPUE         ; Enable pullup on D0 and D1
-        rts
-
-
-**************************************************************
-**************************************************************
-* Helper Functions
-**************************************************************
-**************************************************************
-
-**************************************************************
-* UMult16 - Unsigned 16x16 multiply
-**************************************************************
-UMult16:
-        ; Save registers that we're going to use
-        psha
-        pshh
-        pshx
-        ais #-6                 ; Reserve 6 bytes on stack for local storage
-        clr 6,SP                ; Clear the byte used for multiplication carry
-        ; Calculate first intermediate result
-        ldx {TempWord1+1}       ; Load X with multiplier LSB
-        lda {TempWord2+1}       ; Load A with multiplicand LSB
-        mul                     ; Multiply
-        stx 6,SP                ; Save carry from multiply
-        sta {TempLWord+3}       ; Store LSB of final result
-        ldx TempWord1           ; Load X with multiplier MSB
-        lda {TempWord2+1}       ; Load A with multiplicand LSB
-        mul                     ; Multiply
-        add 6,SP                ; Add carry from previous multiply
-        sta 2,SP                ; Store 2nd byte of interm. result 1
-        bcc UMult16_2           ; Check for carry from addition
-        incx                    ; Increment MSB of interm. result 1
-UMult16_2:
-        stx 1,SP                ; Store MSB of interm. result 1
-        clr 6,SP                ; Clear the byte used for multiplication carry
-        ; Calculate second intermediate result
-        ldx {TempWord1+1}       ; Load X with multiplier LSB
-        lda TempWord2           ; Load A with multiplicand MSB
-        mul                     ; Multiply
-        stx 6,SP                ; Save carry from multiply
-        sta 5,SP                ; Store LSB of interm. result 2
-        ldx TempWord1           ; Load X with multiplier MSB
-        lda TempWord2           ; Load A with multiplicand MSB
-        mul                     ; Multiply
-        add 6,SP                ; Add carry from previous multiply
-        sta 4,SP                ; Store 2nd byte of interm. result 2
-        bcc UMult16_3           ; Check for carry from addition
-        incx                    ; Increment MSB of interm. result 2
-UMult16_3:
-        stx 3,SP                ; Store MSB of interm. result 2
-        ; Add interm. result 1 & 2 and store total in TempLWord
-        lda 2,SP                ; Load A with 2nd byte of result 1
-        add 5,SP                ; Add LSB of result 2
-        sta {TempLWord+2}       ; Store 2nd byte of final result
-        lda 1,SP                ; Load A with MSB of result 1
-        adc 4,SP                ; Add w/carry 2nd byte of result 2
-        sta {TempLWord+1}       ; Store 3rd byte of final result
-        lda 3,SP                ; Load A with MSB from result 2
-        adc #0                  ; Add carry from previous result
-        sta TempLWord           ; Store MSB of final result
-        ; Restore registers
-        ais #6                  ; Deallocate local storage from stack
-        pulx
-        pulh
-        pula
+InitGyro:
+        mov #$FF,LED_PORT       ; Light up all LEDs to signal sampling of gyro
+        clrx                    ; Clear the index register
+        lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
+        ora #ADC_ENABLE         ; Set the enable bit
+        sta ADSCR               ; Start an ADC conversion on the gyro chanel
+        brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
+        lda ADR                 ; Read ADC value
+        add {GyroCenter+1}      ; Add to our running total (LSB)
+        sta {GyroCenter+1}      ; Store to LSB
+        clra
+        adc GyroCenter          ; Add to our running total (MSB)
+        sta GyroCenter          ; Store to MSB
+        incx
+        cpx #$00                ; See if we've taken 256 samples yet
+        bne FindGyroCenter      ; Take another sample
+        ; Done sampling, now average
+        brclr 7,GyroCenter,NoRound
+        inc GyroCenter          ; Round up because MSB of lower byte was set
+NoRound:
+        clr LED_PORT            ; Turn off the LEDs to indicate center found
         rts
 
 **************************************************************
-* IUMult16 - Unsigned 16x16 multiply (for interrupts)
+* InitGyroTimer - Initializes the gyro timer (timer 1)
 **************************************************************
-IUMult16:
-        ; Save registers that we're going to use
-        psha
-        pshh
-        pshx
-        ais #-6                 ; Reserve 6 bytes on stack for local storage
-        clr 6,SP                ; Clear the byte used for multiplication carry
-        ; Calculate first intermediate result
-        ldx {ITempWord1+1}       ; Load X with multiplier LSB
-        lda {ITempWord2+1}       ; Load A with multiplicand LSB
-        mul                     ; Multiply
-        stx 6,SP                ; Save carry from multiply
-        sta {ITempLWord+3}       ; Store LSB of final result
-        ldx ITempWord1           ; Load X with multiplier MSB
-        lda {ITempWord2+1}       ; Load A with multiplicand LSB
-        mul                     ; Multiply
-        add 6,SP                ; Add carry from previous multiply
-        sta 2,SP                ; Store 2nd byte of interm. result 1
-        bcc IUMult16_2           ; Check for carry from addition
-        incx                    ; Increment MSB of interm. result 1
-IUMult16_2:
-        stx 1,SP                ; Store MSB of interm. result 1
-        clr 6,SP                ; Clear the byte used for multiplication carry
-        ; Calculate second intermediate result
-        ldx {ITempWord1+1}       ; Load X with multiplier LSB
-        lda ITempWord2           ; Load A with multiplicand MSB
-        mul                     ; Multiply
-        stx 6,SP                ; Save carry from multiply
-        sta 5,SP                ; Store LSB of interm. result 2
-        ldx ITempWord1           ; Load X with multiplier MSB
-        lda ITempWord2           ; Load A with multiplicand MSB
-        mul                     ; Multiply
-        add 6,SP                ; Add carry from previous multiply
-        sta 4,SP                ; Store 2nd byte of interm. result 2
-        bcc IUMult16_3           ; Check for carry from addition
-        incx                    ; Increment MSB of interm. result 2
-IUMult16_3:
-        stx 3,SP                ; Store MSB of interm. result 2
-        ; Add interm. result 1 & 2 and store total in TempLWord
-        lda 2,SP                ; Load A with 2nd byte of result 1
-        add 5,SP                ; Add LSB of result 2
-        sta {ITempLWord+2}       ; Store 2nd byte of final result
-        lda 1,SP                ; Load A with MSB of result 1
-        adc 4,SP                ; Add w/carry 2nd byte of result 2
-        sta {ITempLWord+1}       ; Store 3rd byte of final result
-        lda 3,SP                ; Load A with MSB from result 2
-        adc #0                  ; Add carry from previous result
-        sta ITempLWord           ; Store MSB of final result
-        ; Restore registers
-        ais #6                  ; Deallocate local storage from stack
-        pulx
-        pulh
-        pula
-        rts
-
-**************************************************************
-* GetByte - Get byte and return it in accumulator
-**************************************************************
-GetByte:
-        lda SCS1                ; Check to see if character is available
-        and #$20                ; $20 = Receiver Full bit
-        beq GetByte
-        lda SCDR                ; Read character
-        rts
-
-**************************************************************
-* SendByte - Send the byte in Accum out the serial port
-**************************************************************
-SendByte:
-        brclr 7,SCS1,$          ; Wait until xmitter is ready.
-        sta SCDR                ; Xmit it our serial port
+InitGyroTimer:
+        mov #$00,T1MODH
+        mov #$26,T1MODL         ; Set up for ~1ms interrupts
+        mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
         rts
 
 
@@ -805,6 +663,147 @@ DeltaYIsNeg:
 UpdateDone:
         ; Restore registers
         pula
+        rts
+
+
+**************************************************************
+**************************************************************
+* Helper Functions
+**************************************************************
+**************************************************************
+
+**************************************************************
+* UMult16 - Unsigned 16x16 multiply
+**************************************************************
+UMult16:
+        ; Save registers that we're going to use
+        psha
+        pshh
+        pshx
+        ais #-6                 ; Reserve 6 bytes on stack for local storage
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate first intermediate result
+        ldx {TempWord1+1}       ; Load X with multiplier LSB
+        lda {TempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta {TempLWord+3}       ; Store LSB of final result
+        ldx TempWord1           ; Load X with multiplier MSB
+        lda {TempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 2,SP                ; Store 2nd byte of interm. result 1
+        bcc UMult16_2           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 1
+UMult16_2:
+        stx 1,SP                ; Store MSB of interm. result 1
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate second intermediate result
+        ldx {TempWord1+1}       ; Load X with multiplier LSB
+        lda TempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta 5,SP                ; Store LSB of interm. result 2
+        ldx TempWord1           ; Load X with multiplier MSB
+        lda TempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 4,SP                ; Store 2nd byte of interm. result 2
+        bcc UMult16_3           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 2
+UMult16_3:
+        stx 3,SP                ; Store MSB of interm. result 2
+        ; Add interm. result 1 & 2 and store total in TempLWord
+        lda 2,SP                ; Load A with 2nd byte of result 1
+        add 5,SP                ; Add LSB of result 2
+        sta {TempLWord+2}       ; Store 2nd byte of final result
+        lda 1,SP                ; Load A with MSB of result 1
+        adc 4,SP                ; Add w/carry 2nd byte of result 2
+        sta {TempLWord+1}       ; Store 3rd byte of final result
+        lda 3,SP                ; Load A with MSB from result 2
+        adc #0                  ; Add carry from previous result
+        sta TempLWord           ; Store MSB of final result
+        ; Restore registers
+        ais #6                  ; Deallocate local storage from stack
+        pulx
+        pulh
+        pula
+        rts
+
+**************************************************************
+* IUMult16 - Unsigned 16x16 multiply (for interrupts)
+**************************************************************
+IUMult16:
+        ; Save registers that we're going to use
+        psha
+        pshh
+        pshx
+        ais #-6                 ; Reserve 6 bytes on stack for local storage
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate first intermediate result
+        ldx {ITempWord1+1}       ; Load X with multiplier LSB
+        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta {ITempLWord+3}       ; Store LSB of final result
+        ldx ITempWord1           ; Load X with multiplier MSB
+        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 2,SP                ; Store 2nd byte of interm. result 1
+        bcc IUMult16_2           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 1
+IUMult16_2:
+        stx 1,SP                ; Store MSB of interm. result 1
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate second intermediate result
+        ldx {ITempWord1+1}       ; Load X with multiplier LSB
+        lda ITempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta 5,SP                ; Store LSB of interm. result 2
+        ldx ITempWord1           ; Load X with multiplier MSB
+        lda ITempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 4,SP                ; Store 2nd byte of interm. result 2
+        bcc IUMult16_3           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 2
+IUMult16_3:
+        stx 3,SP                ; Store MSB of interm. result 2
+        ; Add interm. result 1 & 2 and store total in TempLWord
+        lda 2,SP                ; Load A with 2nd byte of result 1
+        add 5,SP                ; Add LSB of result 2
+        sta {ITempLWord+2}       ; Store 2nd byte of final result
+        lda 1,SP                ; Load A with MSB of result 1
+        adc 4,SP                ; Add w/carry 2nd byte of result 2
+        sta {ITempLWord+1}       ; Store 3rd byte of final result
+        lda 3,SP                ; Load A with MSB from result 2
+        adc #0                  ; Add carry from previous result
+        sta ITempLWord           ; Store MSB of final result
+        ; Restore registers
+        ais #6                  ; Deallocate local storage from stack
+        pulx
+        pulh
+        pula
+        rts
+
+**************************************************************
+* GetByte - Get byte and return it in accumulator
+**************************************************************
+GetByte:
+        lda SCS1                ; Check to see if character is available
+        and #$20                ; $20 = Receiver Full bit
+        beq GetByte
+        lda SCDR                ; Read character
+        rts
+
+**************************************************************
+* SendByte - Send the byte in Accum out the serial port
+**************************************************************
+SendByte:
+        brclr 7,SCS1,$          ; Wait until xmitter is ready.
+        sta SCDR                ; Xmit it our serial port
         rts
 
 
