@@ -14,6 +14,17 @@ int main(int argc, char **argv)
   unsigned char buf[128];
   int fd, num;
   struct termios opts;
+  int rc = 1;
+  int cc = 1;
+
+  if(argc > 1) {
+    if(argv[1][0] == 'r') {
+      cc = 0;
+    }
+    else if(argv[1][0] == 'c') {
+      rc = 0;
+    }
+  }
 
   if((fd = open("/dev/com1", O_RDWR | O_NOCTTY)) == -1) {
     printf("Unable to open port.\n");
@@ -43,13 +54,17 @@ int main(int argc, char **argv)
     if(buf[0] == ATTN_CHAR)
     {
       num = read(fd, buf, 3);
-      printf("X: %d ", buf[0]);
-      printf("Y: %d ", buf[1]);
-      printf("Theta: %d\n", buf[2]);
+      if(cc) {
+        printf("\nX: %d ", buf[0]);
+        printf("Y: %d ", buf[1]);
+        printf("Theta: %d\t", buf[2]);
+      }
     }
     else
     {
-      printf("%c", buf[0]);
+      if(rc) {
+        printf("%c", buf[0]);
+      }
     }
   }
 
