@@ -16,7 +16,17 @@
 * 01/31/03 David Flowerday      Initial version
 **************************************************************
 
-$INCLUDE 'gpgpregs.inc'         ; Processor defines
+$INCLUDE 'gpgtregs.inc'         ; Processor defines
+
+RAMStart EQU $0040
+FLASHStart EQU $8000
+VectorStart EQU $FFDC
+
+DISTANCE_RES_LOW EQU $0
+DISTANCE_RES_HIGH EQU $1
+PHOTO_SENSOR_PORT EQU PORTD
+ADC_POT_CHAN EQU $1
+ADC_ENABLE EQU $80
 
 **************************************************************
 **************************************************************
@@ -34,9 +44,17 @@ DeltaX:
         ds $02
 DeltaY:
         ds $02
+DeltaXNeg:
+        ds $01
+DeltaYNeg:
+        ds $01
 Distance:
         ds $02
 DistanceNeg:
+        ds $01
+RobotAngle:
+        ds $01
+LastPhotoVals:
         ds $01
 TempWord1:
         ds $02
@@ -54,7 +72,8 @@ TempLWord:
 **************************************************************
 **************************************************************
         org FLASHStart
-        
+$INCLUDE 'sinetable.inc'
+
 **************************************************************
 **************************************************************
 * Constants
@@ -92,9 +111,9 @@ QuadratureTable:
 **************************************************************
 QNoChange:
         rts                     ; Just return to the caller
-        
+
 **************************************************************
-* QIncrement - Wheels turned forward, so increment 
+* QIncrement - Wheels turned forward, so increment
 *              the position
 **************************************************************
 QIncrement:
@@ -104,7 +123,7 @@ QIncrement:
         sta Distance
         clr DistanceNeg         ; Distance is not negative
         rts                     ; Return to main loop
-        
+
 **************************************************************
 * QDecrement - Wheels turned backwards, so decrement
 *              the position
@@ -116,13 +135,13 @@ QDecrement:
         sta Distance
         mov #$80,DistanceNeg    ; Distance is negative
         rts                     ; Return to main loop
-        
+
 **************************************************************
 * QError - Illegal light sensor state change
 **************************************************************
 QError:
         ; ???
-        rts                     ; Return to main loop                        
+        rts                     ; Return to main loop
 
 
 **************************************************************
@@ -151,7 +170,20 @@ InitRAM:
         lda SRSR                ; Read Reset Status Register
         and #%11000110          ; Check for a reason that would invalidate RAM
         beq InitRAMDone         ; RAM should still be good, don't initialize
-        ;;; Init ram here ;;;
+        mov #0,LastPhotoVals
+        mov #0,RobotAngle
+        mov #0,AbsoluteX
+        mov #0,{AbsoluteX+1}
+        mov #0,{AbsoluteX+2}
+        mov #0,{AbsoluteX+3}
+        mov #0,AbsoluteY
+        mov #0,{AbsoluteY+1}
+        mov #0,{AbsoluteY+2}
+        mov #0,{AbsoluteY+3}
+        mov #0,DeltaX
+        mov #0,{DeltaX+1}
+        mov #0,DeltaY
+        mov #0,{DeltaY+1}
 InitRAMDone:
         rts
 
@@ -217,10 +249,10 @@ UMult16_3:
         pulh
         pula
         rts
-        
-        
-        
-        
+
+
+
+
 
 **************************************************************
 * GetByte - Get byte and return it in accumulator
@@ -252,26 +284,23 @@ Main:
         clra                    ; Clear accumulator
         clrh                    ; Clear high index register
         clrx                    ; Clear index register
-        
+
         ; Initialize subsystems
-        bsr InitSCI             ; Initialize the Serial Comm. Interface
-        bsr InitRAM             ; Initialize RAM variables
+        jsr InitSCI             ; Initialize the Serial Comm. Interface
+        jsr InitRAM             ; Initialize RAM variables
         cli                     ; Enable interrupts
 
 MainLoop:
         jsr ReadPhotos          ; Find our 'Distance Delta'
-        psha                    ; Store 'Distance Delta' on stack
-        jsr ReadPots            ; Find our 'Crab Angle'
+        jsr ReadPot             ; Find our 'Crab Angle'
         eor DistanceNeg         ; Correct the angle if we're going backwards
-        psha                    ; Store 'Crab Angle' on stack
-        lda RobotAngle          ; Load the 'Robot Angle' from gyroscope
-        psha                    ; Store 'Robot Angle' on stack
-        jsr ComputeVector       ; Find our 'Delta X' and 'Delta Y' using
+        
+        jsr DetermineQuad       ; Determine what quadrant our vector is in
+        
+        jsr ComputeDeltas       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
-                                ; (from stack)
-        psha                    ; Store 'Delta Y' on stack
         jsr UpdatePosition      ; Updates our field position using
-                                ; 'Delta X' and 'Delta Y' (from stack)
+                                ; 'Delta X' and 'Delta Y'
         bra MainLoop            ; Do it all over again
 
 **************************************************************
@@ -279,11 +308,13 @@ MainLoop:
 *              distance from the last time it was called (if any)
 **************************************************************
 ReadPhotos:
-        lda PHOTO_SENSOR_PORT   ; Read the photo sensors
+        ;lda PHOTO_SENSOR_PORT   ; Read the photo sensors
+        lda #$01
         and #$03                ; Mask off the photo sensor bits
         psha                    ; Store new reading on stack for use later
         ora LastPhotoVals       ; OR in the last readings
-        mul #$03                ; Multiply by 3 for jump table purposes
+        ldx #$03
+        mul                     ; Multiply by 3 for jump table purposes
         tax                     ; Move table index into index register
         jsr QuadratureTable,X   ; Look up the state transition
         pula                    ; Pull new reading back off stack
@@ -291,7 +322,7 @@ ReadPhotos:
         asla                    ;
         sta LastPhotoVals       ; Store off what are now the "old readings"
         rts                     ; Return to main loop
-                
+
 **************************************************************
 * ReadPot - Reads the potentiometers
 **************************************************************
@@ -302,35 +333,41 @@ ReadPot:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
         rts
-        
+
 **************************************************************
-* ComputeVector - Using distance and direction, calculate
+* ComputeDeltas - Using distance and direction, calculate
 *                 Delta X and Delta Y
 *                 Args: Direction in A, distance on stack
 **************************************************************
-ComputeVector:
+ComputeDeltas:
         pshx                    ; Save off index register since we use it
+        psha                    ; Save direction onto stack
+        
+        ; Find Delta Y
         tax                     ; Transfer direction to index register
         lda SineTable,X         ; Look up sin(direction)
-        psha                    ; Save sin(direction) onto stack
         sta {TempWord1+1}       ; Store sin(dir) in TempWord1
         clr TempWord1           ; Clear MSB of TempWord1
-        lda 2,SP                ; Load LSB of Distance
+        lda {Distance+1}        ; Load LSB of Distance
         sta {TempWord2+1}       ; Store into TempWord2
-        lda 3,SP                ; Load MSB of Distance
+        lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by sin(Direction)
         lda {TempLWord+1}       ; Load integer portion of Delta Y
         sta DeltaY              ; Store into DeltaY
         lda {TempLWord+2}       ; Load fractional portion of Delta Y
         sta {DeltaY+1}          ; Store into DeltaY
-        pula                    ; Reload A with sin(direction)
-        coma                    ; Convert A to cos(direction)
+        
+        ; Find Delta X
+        pula                    ; Reload A with direction
+        sub #64t                ; A = A - 90 degrees
+        tax                     ; Transfer direction to index register
+        lda SineTable,X         ; Look up sin(90 - direction) (== cos(dir))
         sta {TempWord1+1}       ; Store cos(dir) in TempWord1
         clr TempWord1           ; Clear MSB of TempWord1
-        lda 2,SP                ; Load LSB of Distance
+        lda {Distance+1}        ; Load LSB of Distance
         sta {TempWord2+1}       ; Store into TempWord2
-        lda 3,SP                ; Load MSB of Distance
+        lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by cos(Direction)
         lda {TempLWord+1}       ; Load integer portion of Delta X
@@ -341,6 +378,36 @@ ComputeVector:
         rts
 
 **************************************************************
+* DetermineQuad - Determines the quadrant of the delta
+*                 vector and sets DeltaXNeg and DeltaYNeg
+*                 appropriately
+*                 Args: angle in A (not modified)
+**************************************************************
+DetermineQuad:
+        cmp #64t                ; Compare angle to 90 degrees
+        bhi CheckQuad2          ; Greater than 90, check quadrant 2
+        clr DeltaXNeg           ; Both X and Y are positive
+        clr DeltaYNeg
+        bra DetermineQuadDone
+CheckQuad2:
+        cmp #128t               ; Compare angle to 180 degrees
+        bhi CheckQuad3          ; Greater than 180, check quadrant 3
+        mov #$FF,DeltaXNeg      ; X is negative
+        clr DeltaYNeg           ; Y is positive
+        bra DetermineQuadDone
+CheckQuad3:
+        cmp #192t               ; Compare angle to 270 degrees
+        bhi CheckQuad4          ; Greater than 270, must be quadrant 4
+        mov #$FF,DeltaXNeg      ; X and Y are negative
+        mov #$FF,DeltaYNeg
+        bra DetermineQuadDone
+CheckQuad4:
+        clr DeltaXNeg           ; X is positive
+        mov #$FF,DeltaYNeg      ; Y is negative
+DetermineQuadDone:
+        rts
+        
+**************************************************************
 * UpdatePosition - Updates 'Absolute X' and 'Absolute Y' with
 *                  values from 'Delta X' and 'Delta Y'
 *                  Args: none
@@ -348,22 +415,47 @@ ComputeVector:
 UpdatePosition:
         ; Save registers used by function
         psha
-        
+
         ; Update X coordinate first
+        lda DeltaXNeg           ; Check to see if DeltaX is negative
+        bne DeltaXIsNeg
+        
+        ; Delta X is positive
         lda {DeltaX+1}          ; Load LSB of DeltaX
         add {AbsoluteX+3}       ; Add LSB of AbsoluteX
         sta {AbsoluteX+3}       ; Store result
-        lda {DeltaX}            ; Load 2nd byte of DeltaX
+        lda DeltaX              ; Load 2nd byte of DeltaX
         adc {AbsoluteX+2}       ; Add LSB of AbsoluteX + carry from previous
         sta {AbsoluteX+2}       ; Store result
         clra                    ; Clear A (no more bytes from DeltaX)
         adc {AbsoluteX+1}       ; Add carry from 2nd byte to 3rd byte
-        sta {AbsoltueX+1}       ; Store result
+        sta {AbsoluteX+1}       ; Store result
         clra                    ; Clear A (no more bytes from DeltaX)
         adc AbsoluteX           ; Add carry from 3rd byte to MSB
         sta AbsoluteX           ; Store result
+        bra DoDeltaY            ; Go do the Y component now
         
+DeltaXIsNeg:
+        ; Delta X is negative
+        lda {AbsoluteX+3}       ; Load LSB of AbsoluteX
+        sub {DeltaX+1}          ; Subtract LSB of DeltaX
+        sta {AbsoluteX+3}       ; Store result
+        lda {AbsoluteX+2}       ; Load 2nd byte of AbsoluteX
+        sbc DeltaX              ; Subtract 2nd byte of DeltaX and carry bit
+        sta {AbsoluteX+2}       ; Store result
+        lda {AbsoluteX+1}       ; Load 3rd byte of AbsoluteX
+        sbc #0                  ; Subtract carry bit from previous
+        sta {AbsoluteX+1}       ; Store result
+        lda AbsoluteX           ; Load MSB of AbsoluteX
+        sbc #0                  ; Subtract carry bit from previous
+        sta AbsoluteX           ; Store result
+
+DoDeltaY:
         ; Now update Y coordinate
+        lda DeltaYNeg           ; Check to see if DeltaY is negative
+        bne DeltaYIsNeg
+        
+        ; Delta Y is positive
         lda {DeltaY+1}          ; Load LSB of DeltaY
         add {AbsoluteY+3}       ; Add LSB of AbsoluteY
         sta {AbsoluteY+3}       ; Store result
@@ -372,11 +464,28 @@ UpdatePosition:
         sta {AbsoluteY+2}       ; Store result
         clra                    ; Clear A (no more bytes from DeltaY)
         adc {AbsoluteY+1}       ; Add carry from 2nd byte to 3rd byte
-        sta {AbsoltueY+1}       ; Store result
+        sta {AbsoluteY+1}       ; Store result
         clra                    ; Clear A (no more bytes from DeltaY)
         adc AbsoluteY           ; Add carry from 3rd byte to MSB
         sta AbsoluteY           ; Store result
-        
+        bra UpdateDone          ; All done
+
+DeltaYIsNeg:
+        ; Delta Y is negative
+        lda {AbsoluteY+3}       ; Load LSB of AbsoluteY
+        sub {DeltaY+1}          ; Subtract LSB of DeltaY
+        sta {AbsoluteY+3}       ; Store result
+        lda {AbsoluteY+2}       ; Load 2nd byte of AbsoluteY
+        sbc DeltaY              ; Subtract 2nd byte of DeltaY and carry bit
+        sta {AbsoluteY+2}       ; Store result
+        lda {AbsoluteY+1}       ; Load 3rd byte of AbsoluteY
+        sbc #0                  ; Subtract carry bit from previous
+        sta {AbsoluteY+1}       ; Store result
+        lda AbsoluteY           ; Load MSB of AbsoluteY
+        sbc #0                  ; Subtract carry bit from previous
+        sta AbsoluteY           ; Store result
+
+UpdateDone:
         ; Restore registers
         pula
         rts
@@ -392,7 +501,7 @@ UpdatePosition:
 * DummyIsr - used when we don't want to do anything in
 *            response to an interrupt type
 **************************************************************
-        org DummyIsr
+DummyIsr:
         rti
 
 
@@ -404,21 +513,21 @@ UpdatePosition:
 **************************************************************
 **************************************************************
         org VectorStart
-        dw  AppVectorStart      ; Time Base Vector
-        dw  AppVectorStart+3    ; ADC Conversion Complete
-        dw  AppVectorStart+6    ; Keyboard Vector
-        dw  AppVectorStart+9    ; SCI Transmit Vector
-        dw  AppVectorStart+12   ; SCI Receive Vector
-        dw  AppVectorStart+15   ; SCI Error Vector
-        dw  AppVectorStart+18   ; SPI Transmit Vector
-        dw  AppVectorStart+21   ; SPI Receive Vector
-        dw  AppVectorStart+24   ; TIM2 Overflow Vector
-        dw  AppVectorStart+27   ; TIM2 Channel 1 Vector
-        dw  AppVectorStart+30   ; TIM2 Channel 0 Vector
-        dw  AppVectorStart+33   ; TIM1 Overflow Vector
-        dw  AppVectorStart+36   ; TIM1 Channel 1 Vector
-        dw  AppVectorStart+39   ; TIM1 Channel 0 Vector
-        dw  AppVectorStart+42   ; PLL Vector
-        dw  AppVectorStart+45   ; IRQ1 Vector
-        dw  AppVectorStart+48   ; SWI Vector
-        dw  Boot08Main          ; Reset Vector
+        dw DummyIsr             ; Time Base Vector
+        dw DummyIsr             ; ADC Conversion Complete
+        dw DummyIsr             ; Keyboard Vector
+        dw DummyIsr             ; SCI Transmit Vector
+        dw DummyIsr             ; SCI Receive Vector
+        dw DummyIsr             ; SCI Error Vector
+        dw DummyIsr             ; SPI Transmit Vector
+        dw DummyIsr             ; SPI Receive Vector
+        dw DummyIsr             ; TIM2 Overflow Vector
+        dw DummyIsr             ; TIM2 Channel 1 Vector
+        dw DummyIsr             ; TIM2 Channel 0 Vector
+        dw DummyIsr             ; TIM1 Overflow Vector
+        dw DummyIsr             ; TIM1 Channel 1 Vector
+        dw DummyIsr             ; TIM1 Channel 0 Vector
+        dw DummyIsr             ; PLL Vector
+        dw DummyIsr             ; IRQ1 Vector
+        dw DummyIsr             ; SWI Vector
+        dw Main                 ; Reset Vector
