@@ -123,7 +123,7 @@ RobotTheta:
         ds $04
 GyroValNeg:
         ds $01
-TempGyroVal:
+GyroValue:
         ds $01
 GyroCenter:
         ds $02
@@ -791,7 +791,7 @@ GyroNoToggleLED:
         sta ADSCR               ; Start an ADC conversion on the gyro chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read gyro value
-        sta TempGyroVal
+        sta GyroValue
         sub GyroCenter          ; Convert so it's centered around 0
         cmp #1t
         bgt GyroPositive        ; Turning in a positive direction
@@ -916,12 +916,12 @@ GetWaypoint:
         lda RCCurrentWaypt      ; Load RC's current waypoint
         jsr SendByte            ; Send it out
         bra DataRequestDone     ; All done
-        
+
 SetWaypoint:
         jsr GetByte             ; Read in waypoint # from RC
         sta RCCurrentWaypt      ; Store it in our RAM
         bra DataRequestDone     ; All done
-        
+
 AllRequest:
         lda AbsoluteX
         jsr SendByte
@@ -955,7 +955,7 @@ AllRequest:
         jsr SendByte
         lda ResetStatus
         jsr SendByte
-        bra DataRequestDone     ; All done
+        jmp DataRequestDone     ; All done
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
@@ -976,7 +976,7 @@ DummyIsr:
         dw DummyIsr             ; ADC Conversion Complete
         dw DummyIsr             ; Keyboard Vector
         dw DummyIsr             ; SCI Transmit Vector
-        dw RCRequestIsr         ; SCI Receive Vector
+        dw DataRequestIsr       ; SCI Receive Vector
         dw DummyIsr             ; SCI Error Vector
         dw DummyIsr             ; SPI Transmit Vector
         dw DummyIsr             ; SPI Receive Vector
