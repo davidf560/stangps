@@ -251,8 +251,7 @@ NoRound:
 **************************************************************
 InitSCI:
         lda SCS1
-;        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
-        mov #$02,SCBR           ; Baud Rate = 38400 (at 9.8MHz clock)
+        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
         mov #$2C,SCC2           ; Enable the SCI for TX and RX
         mov #$00,SCC3           ; No SCC error interrupts, please
