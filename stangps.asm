@@ -97,6 +97,10 @@ TempGyroVal:
         ds $01
 GyroCenter:
         ds $02
+GyroLoopCount:
+        ds $01
+PotValue:
+        ds $01
 
 **************************************************************
 **************************************************************
@@ -243,6 +247,7 @@ FindGyroCenter:
         brclr 7,GyroCenter,NoRound
         inc GyroCenter          ; Round up because MSB of lower byte was set
 NoRound:
+        clr PORTA               ; Turn off the LEDs
         rts
 
 **************************************************************
@@ -287,6 +292,8 @@ InitRAM:
         mov #0,{RobotTheta+1}
         mov #0,{RobotTheta+2}
         mov #0,{RobotTheta+3}
+        mov #0,GyroLoopCount
+        mov #0,PotValue
         lda PHOTO_SENSOR_PORT
         and #$03
         asla
@@ -522,6 +529,7 @@ ReadPot:
         sta ADSCR               ; Start an ADC conversion on the pot chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
+        sta PotValue            ; Store in RAM
         cli
         rts
 
@@ -712,6 +720,12 @@ UpdateDone:
 *           angular robot position
 **************************************************************
 GyroIsr:
+        inc GyroLoopCount       ; Increment our loop count
+        bne GyroNoToggleLED     ; If != 0, don't toggle LED
+        lda PORTA               ; Load LED settings
+        eor #$02                ; Toggle LED 2
+        sta PORTA               ; Set the LEDs
+GyroNoToggleLED:
         lda T1SC                ; Load T1SC to clear TOF bit
         mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
         clr GyroValNeg          ; Initialize variable
@@ -779,6 +793,9 @@ GyroDone:
 *                positioning update
 **************************************************************
 RCRequestIsr:
+        lda PORTA               ; Read the LED states
+        eor #$01                ; Toggle the lowest bit
+        sta PORTA               ; Change the display
         jsr GetByte             ; Read the byte that was sent to us
         cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
         bne RCRequestDone       ; Not for us - ignore it
@@ -790,7 +807,8 @@ RCRequestIsr:
         ;;Debug
         lda TempGyroVal
         jsr SendByte            ; Send it out
-        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
+;        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
+        lda PotValue
         jsr SendByte            ; Send it out
         lda RobotTheta          ; Load LSB of integer portion of Theta
         jsr SendByte            ; Send it out
