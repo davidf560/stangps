@@ -262,9 +262,9 @@ MainLoop:
         jsr ReadPhotos          ; Find our 'Distance Delta'
         psha                    ; Store 'Distance Delta' on stack
         jsr ReadPots            ; Find our 'Crab Angle'
+        eor DistanceNeg         ; Correct the angle if we're going backwards
         psha                    ; Store 'Crab Angle' on stack
         lda RobotAngle          ; Load the 'Robot Angle' from gyroscope
-        eor DistanceNeg         ; Correct the angle if we're going backwards
         psha                    ; Store 'Robot Angle' on stack
         jsr ComputeVector       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
