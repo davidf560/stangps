@@ -37,23 +37,26 @@ int main(int argc, char **argv) {
   
   increment = 64.0 / ((right90 * 1.0) - (right180 * 1.0));
   for(i = 0; i < right180; i++) {
-      temp = 128.0 + ((right180 - i) * increment) + 0.5;
+      temp = (128.0 - ((right180 - i) * increment)) + 0.5;
+      temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
   for(i = right180; i < right90; i++) {
-      temp = 64.0 + ((right90 - i) * increment) + 0.5;
+      temp = (192.0 - ((right90 - i) * increment)) + 0.5;
+      temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
   
   increment = 64.0 / ((zero * 1.0) - (right90 * 1.0));
   for(i = right90; i < zero; i++) {
-      temp = 0 + ((zero - i) * increment) + 0.5;
+      temp = (256.0 - ((zero - i) * increment)) + 0.5;
+      temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
   
   increment = 64.0 / ((left90 * 1.0) - (zero * 1.0));
   for(i = zero; i < left90; i++) {
-      temp = (192 + ((left90 - i) * increment) + 0.5);
+      temp = (64.0 - ((left90 - i) * increment)) + 0.5;
       temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
@@ -61,12 +64,12 @@ int main(int argc, char **argv) {
   
   increment = 64.0 / ((left180 * 1.0) - (left90 * 1.0));
   for(i = left90; i < left180; i++) {
-      temp = (128 + ((left180 - i) * increment) + 0.5);
+      temp = (128.0 - ((left180 - i) * increment)) + 0.5;
       temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
   for(i = left180; i < 256; i++) {
-      temp = (128 - ((i - left180) * increment) + 0.5);
+      temp = (128 + ((i - left180) * increment)) + 0.5;
       temp &= 0xFF; /* Mask to 8 bits */
       printf("        db %3dt                 ; PotToBrads(%d)\n", temp, i);
   }
