@@ -39,18 +39,24 @@ ADC_GYRO_CHAN           EQU $0
 ADC_ENABLE              EQU $00
 
 ; Potentiometer Constants
-POT_CENTER_VAL          EQU 127t
+POT_CENTER_VAL          EQU 129t
+POT_MAX_RIGHT_VAL       EQU 58t
+POT_MAX_OFFSET    EQU 64t
+BRADS_PER_TICK_H        EQU 0t
+BRADS_PER_TICK_L        EQU 231t
 
 ; Gyroscope Constants
 ; First set is for 64 degs/sec gyro
-;GYRO_DEGS_HIGH          EQU $1e
-;GYRO_DEGS_LOW           EQU $48
+;GYRO_PDEGS_HIGH         EQU $1e
+;GYRO_PDEGS_LOW          EQU $48
+;GYRO_NDEGS_HIGH         EQU $1e
+;GYRO_NDEGS_LOW          EQU $48
 ; This set is for 75 degs/sec gyro (needs different factor
 ; for positive versus negative for some reason)
-GYRO_PDEGS_HIGH           EQU $23
-GYRO_PDEGS_LOW            EQU $AC
-GYRO_NDEGS_HIGH           EQU $23
-GYRO_NDEGS_LOW            EQU $1F
+GYRO_PDEGS_HIGH         EQU $23
+GYRO_PDEGS_LOW          EQU $AC
+GYRO_NDEGS_HIGH         EQU $23
+GYRO_NDEGS_LOW          EQU $1F
 
 ; Serial Communications Constants
 CC_ATTENTION_BYTE       EQU $06
@@ -526,7 +532,8 @@ ReadPhotos:
         rts                     ; Return to main loop
 
 **************************************************************
-* ReadPot - Reads the potentiometers
+* ReadPot - Reads the potentiometers, returns crab angle
+*           in brads
 **************************************************************
 ReadPot:
         lda #ADC_POT_CHAN       ; Load the channel # that the pot is on
@@ -536,6 +543,16 @@ ReadPot:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
         sta PotValue            ; Store in RAM
+        sub #POT_MAX_RIGHT_VAL
+        sta {TempWord1+1}       ; Prepare for multiply
+        clr TempWord1           ; Clear fraction
+        lda #BRADS_PER_TICK_H   ; Load scaling factor as multiplicand
+        sta TempWord2
+        lda #BRADS_PER_TICK_L
+        sta {TempWord2+1}
+        jsr UMult16             ; Multiply
+        lda {TempLWord+2}       ; Load crab brads into A
+        sub #POT_MAX_OFFSET     ; Convert back to straight ahead = 0 brads
         cli
         rts
 
@@ -549,7 +566,7 @@ ReadPot:
 ComputeHeading:
         sub #POT_CENTER_VAL     ; Center our pot reading around 0
         add {RobotTheta+1}      ; Add in our robot's orientation
-                                ; (measured in "binary degrees")
+                                ; (measured in brads)
         rts
 
 **************************************************************
@@ -823,10 +840,9 @@ RCRequestIsr:
         ; RC has requested that we send position data, so we'll
         ; do just that
 ;        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
-        lda TempGyroVal
+        lda PotValue
         jsr SendByte            ; Send it out
-;        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
-        lda GyroCenter
+        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
         jsr SendByte            ; Send it out
         lda RobotTheta          ; Load LSB of integer portion of Theta
         jsr SendByte            ; Send it out
