@@ -115,6 +115,8 @@ GyroLoopCount:
         ds $01
 PotValue:
         ds $01
+AbsHeading:
+        ds $01
 
 **************************************************************
 **************************************************************
@@ -542,7 +544,7 @@ ReadPot:
         sta ADSCR               ; Start an ADC conversion on the pot chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
-        sta PotValue            ; Store in RAM
+        cli
         sub #POT_MAX_RIGHT_VAL
         sta {TempWord1+1}       ; Prepare for multiply
         clr TempWord1           ; Clear fraction
@@ -553,7 +555,7 @@ ReadPot:
         jsr UMult16             ; Multiply
         lda {TempLWord+2}       ; Load crab brads into A
         sub #POT_MAX_OFFSET     ; Convert back to straight ahead = 0 brads
-        cli
+        sta PotValue            ; Store in RAM
         rts
 
 **************************************************************
@@ -564,9 +566,9 @@ ReadPot:
 *                  Returns: Heading in A
 **************************************************************
 ComputeHeading:
-        sub #POT_CENTER_VAL     ; Center our pot reading around 0
-        add {RobotTheta+1}      ; Add in our robot's orientation
+        add RobotTheta          ; Add in our robot's orientation
                                 ; (measured in brads)
+        sta AbsHeading
         rts
 
 **************************************************************
@@ -839,8 +841,7 @@ RCRequestIsr:
 
         ; RC has requested that we send position data, so we'll
         ; do just that
-;        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
-        lda PotValue
+        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
         jsr SendByte            ; Send it out
         lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
         jsr SendByte            ; Send it out
