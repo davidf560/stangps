@@ -29,6 +29,7 @@ DISTANCE_RES_LOW EQU 0t
 DISTANCE_RES_HIGH EQU $1
 PHOTO_SENSOR_PORT EQU PORTD
 ADC_POT_CHAN EQU $1
+ADC_GYRO_CHAN EQU $2
 ADC_ENABLE EQU $80
 
 ; Gyroscope Constants
@@ -343,6 +344,7 @@ Main:
         jsr InitPorts           ; Initialize general purpose I/O ports
         jsr InitSCI             ; Initialize the Serial Comm. Interface
         jsr InitRAM             ; Initialize RAM variables
+        jsr InitGyroTimer       ; Initialize the gyroscope timer
         cli                     ; Enable interrupts
 
 MainLoop:
@@ -350,7 +352,7 @@ MainLoop:
         jsr ReadPot             ; Find our 'Crab Angle'
 
         ;; DEBUG
-        lda #43t
+        lda #0t
 
         eor DistanceNeg         ; Correct the angle if we're going backwards
 
@@ -383,7 +385,6 @@ MainLoop:
         bsr SendByte
         lda AbsoluteY+3
         bsr SendByte
-        
         lda #$45                ; ASCII 'G'
         bsr SendByte
         clra
@@ -600,6 +601,8 @@ UpdateDone:
 *           angular robot position
 **************************************************************
 GyroIsr:
+        lda T1SC                ; Load T1SC to clear TOF bit
+        mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
         clr GyroValNeg          ; Initialize variable
         lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
         ora #ADC_ENABLE         ; Set the enable bit
@@ -612,7 +615,7 @@ GyroIsr:
         blt GyroNegative        ; Turning in a negative direction
         bra GyroDone            ; Not turning at all
 GyroNegative:
-        lda #$FF,GyroValNeg     ; Signal that the gyro value is negative
+        mov #$FF,GyroValNeg     ; Signal that the gyro value is negative
         nega                    ; Convert offset to a positive number for
                                 ;   processing
 GyroPositive:
@@ -624,7 +627,7 @@ GyroPositive:
                                 ;   per tick per sample)
         lda GyroValNeg          ; Check to see if we need to add or subtract
         bne GyroSubtract        ; Need to subtract
-        
+
         ; Add new offset to current angular position
         lda {TempLWord+3}       ; Load LSB of offset
         add {RobotTheta+3}      ; Add LSB of RobotTheta
@@ -639,8 +642,8 @@ GyroPositive:
         adc RobotTheta          ; Add carry from 3rd byte to MSB
         sta RobotTheta          ; Store result
         bra GyroDone            ; Go do the Y component now
-        
-GyroSubtract:        
+
+GyroSubtract:
         ; Subtract new offset from angular position
         lda {RobotTheta+3}      ; Load LSB of RobotTheta
         sub {TempLWord+3}       ; Subtract LSB of offset
@@ -656,8 +659,8 @@ GyroSubtract:
         sta RobotTheta          ; Store result
 
 GyroDone:
-        rti        
-        
+        rti
+
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
