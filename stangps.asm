@@ -292,12 +292,12 @@ InitRAM:
         beq InitRAMDone         ; RAM should still be good, don't initialize
         mov #0,RobotAngle
         mov #0,AbsoluteX
-        mov #0,{AbsoluteX+1}
-        mov #127t,{AbsoluteX+2}
+        mov #127t,{AbsoluteX+1}
+        mov #0,{AbsoluteX+2}
         mov #0,{AbsoluteX+3}
         mov #0,AbsoluteY
-        mov #0,{AbsoluteY+1}
-        mov #127t,{AbsoluteY+2}
+        mov #127t,{AbsoluteY+1}
+        mov #0,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
         mov #0,DeltaX
         mov #0,{DeltaX+1}
@@ -600,9 +600,9 @@ ComputeDeltas:
         lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by sin(Direction)
-        lda TempLWord           ; Load integer portion of Delta Y
+        lda {TempLWord+1}       ; Load integer portion of Delta Y
         sta DeltaY              ; Store into DeltaY
-        lda {TempLWord+1}       ; Load fractional portion of Delta Y
+        lda {TempLWord+2}       ; Load fractional portion of Delta Y
         sta {DeltaY+1}          ; Store into DeltaY
 
         ; Find Delta X
@@ -620,9 +620,9 @@ ComputeDeltas:
         lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by cos(Direction)
-        lda TempLWord           ; Load integer portion of Delta X
+        lda {TempLWord+1}       ; Load integer portion of Delta X
         sta DeltaX              ; Store into DeltaX
-        lda {TempLWord+1}       ; Load fractional portion of Delta X
+        lda {TempLWord+2}       ; Load fractional portion of Delta X
         sta {DeltaX+1}          ; Store into DeltaX
         pulx                    ; Restore index register
         rts
@@ -849,8 +849,8 @@ RCRequestIsr:
 
         ; RC has requested that we send position data, so we'll
         ; do just that
-        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
-        brclr 7,{AbsoluteX+3},NoIncX
+        lda {AbsoluteX+1}       ; Load LSB of integer portion of X
+        brclr 7,{AbsoluteX+2},NoIncX
         inca
 NoIncX:
         jsr SendByte            ; Send it out
@@ -859,8 +859,8 @@ NoIncX:
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
 
-        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
-        brclr 7,{AbsoluteX+3},NoIncY
+        lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
+        brclr 7,{AbsoluteX+2},NoIncY
         inca
 NoIncY:
         jsr SendByte            ; Send it out
