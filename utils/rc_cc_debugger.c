@@ -7,7 +7,7 @@
 #include <errno.h>
 #include <termios.h>
 
-#define  ATTN_CHAR 0x06
+#define  ATTN_CHAR 180
 
 int main(int argc, char **argv)
 {
@@ -64,6 +64,9 @@ int main(int argc, char **argv)
     {
       if(rc) {
         printf("%c", buf[0]);
+        if(buf[0] == 0x0d) {
+          printf("%c", 0x0a);
+        }
       }
     }
   }
