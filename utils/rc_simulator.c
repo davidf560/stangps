@@ -12,6 +12,7 @@ int main(int argc, char **argv)
   unsigned char buf[128];
   int fd, num;
   struct termios opts;
+  unsigned char attn_byte = 180;
 
   if((fd = open("/dev/com1", O_RDWR | O_NOCTTY)) == -1) {
     printf("Unable to open port.\n");
@@ -34,10 +35,7 @@ int main(int argc, char **argv)
   tcsetattr(fd, TCSANOW, &opts);
 
   while(1) {
-    write(fd, buf, 1);
-
-    while((num = read(fd, buf, 1)) < 1);
-    printf("A: %d ", buf[0]);
+    write(fd, &attn_byte, 1);
 
     while((num = read(fd, buf, 1)) < 1);
     printf("X: %d ", buf[0]);
