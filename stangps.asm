@@ -56,17 +56,17 @@ ADC_ENABLE              EQU $00
 
 ; Potentiometer Constants
 ; REAL ROBOT
-POT_CENTER_VAL          EQU 124t
-POT_MAX_RIGHT_VAL       EQU 12t
-POT_MAX_OFFSET          EQU 128t
-BRADS_PER_TICK_H        EQU 1t
-BRADS_PER_TICK_L        EQU 37t
-; PROTO ROBOT
-;POT_CENTER_VAL          EQU 127t
-;POT_MAX_RIGHT_VAL       EQU 13t
+;POT_CENTER_VAL          EQU 124t
+;POT_MAX_RIGHT_VAL       EQU 12t
 ;POT_MAX_OFFSET          EQU 128t
 ;BRADS_PER_TICK_H        EQU 1t
-;BRADS_PER_TICK_L        EQU 30t
+;BRADS_PER_TICK_L        EQU 37t
+; PROTO ROBOT
+POT_CENTER_VAL          EQU 127t
+POT_MAX_RIGHT_VAL       EQU 13t
+POT_MAX_OFFSET          EQU 128t
+BRADS_PER_TICK_H        EQU 1t
+BRADS_PER_TICK_L        EQU 30t
 
 ; Gyroscope Constants
 ; First set is for 64 degs/sec gyro
@@ -87,6 +87,7 @@ REQ_THETA_ONLY          EQU 181t
 REQ_GET_WAYPT           EQU 182t
 REQ_SET_WAYPT           EQU 183t
 REQ_EVERYTHING          EQU 184t
+REQ_DEBUG               EQU 185t
 
 **************************************************************
 **************************************************************
@@ -303,8 +304,8 @@ CheckRSRDone:
 InitWait:
         clrx                    ; Clear the index register
         clr LED_PORT            ; Turn off all LEDs
-        mov #$4B,T2MODH
-        mov #$00,T2MODL         ; Set up for .5 second interrupts
+        mov #$25,T2MODH         ; Used to be 0x4B
+        mov #$00,T2MODL         ; Set up for .5 second delay
         mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
         brclr 7,T2SC,$          ; Busy loop until timer expires
         mov #$80,LED_PORT       ; Light up MSB of LED bargraph
@@ -318,6 +319,8 @@ ContinueWait:
         bra ContinueWait
 InitWaitDone:
         clr LED_PORT            ; Turn off all LEDs
+        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
+        brclr 7,T2SC,$          ; Busy loop until timer expires
         rts
 
 **************************************************************
@@ -913,6 +916,8 @@ DataRequestIsr:
         beq SetWaypoint
         cmp #REQ_EVERYTHING     ; Send back everything we know
         beq AllRequest
+        cmp #REQ_DEBUG          ; Debug request
+        beq DebugRequest
         ; If we've reached this point, then the received byte
         ; did not match any of our command bytes - toggle an LED
         ; to indicate that
@@ -973,6 +978,10 @@ SetWaypoint:
         jsr GetByte             ; Read in waypoint # from RC
         sta RCCurrentWaypt      ; Store it in our RAM
         bra DataRequestDone     ; All done
+
+DebugRequest:
+        ;stop                    ; Should cause illegal opcode reset
+        jmp DataRequestDone        
 
 AllRequest:
         lda AbsoluteX
