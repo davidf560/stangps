@@ -87,7 +87,7 @@ QuadratureTable:
         jmp QDecrement          ; 00 10 -> Reverse rotation
         jmp QError              ; 00 11 -> Shouldn't happen
         jmp QDecrement          ; 01 00 -> Reverse rotation
-        jmp QNoChange           ; 00 00 -> No change
+        jmp QNoChange           ; 01 01 -> No change
         jmp QError              ; 01 10 -> Shouldn't happen
         jmp QIncrement          ; 01 11 -> Forward rotation
         jmp QIncrement          ; 10 00 -> Forward rotation
@@ -110,6 +110,9 @@ QuadratureTable:
 *             readings so don't update the position
 **************************************************************
 QNoChange:
+        mov #0,Distance
+        mov #0,{Distance+1}
+        mov #0,DistanceNeg
         rts                     ; Just return to the caller
 
 **************************************************************
@@ -155,9 +158,10 @@ QError:
 *           for TX, RX at specified baud N81
 **************************************************************
 InitSCI:
+        lda SCS1
         mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
-        mov #$0C,SCC2           ; Enable the SCI for TX/RX
+        mov #$08,SCC2           ; Enable the SCI for TX only
         mov #$00,SCC3           ; No SCC error interrupts, please
         rts
 
@@ -184,9 +188,22 @@ InitRAM:
         mov #0,{DeltaX+1}
         mov #0,DeltaY
         mov #0,{DeltaY+1}
+        mov #0,Distance
+        mov #0,{Distance+1}
+        mov #0,DistanceNeg
 InitRAMDone:
         rts
 
+**************************************************************
+* InitPorts - Initializes all I/O ports and sets appropriate
+*             pullup enable registers
+**************************************************************
+InitPorts:
+        mov #$00,DDRD           ; Port D is all inputs
+        mov #$03,PTDPUE         ; Enable pullup on D0 and D1
+        rts
+
+        
 **************************************************************
 **************************************************************
 * Helper Functions
@@ -281,6 +298,7 @@ SendByte:
 Main:
         ; Initialize registers
         mov #$01,CONFIG1        ; Disable COP
+        mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
         clra                    ; Clear accumulator
         clrh                    ; Clear high index register
@@ -289,6 +307,7 @@ Main:
         ; Initialize subsystems
         jsr InitSCI             ; Initialize the Serial Comm. Interface
         jsr InitRAM             ; Initialize RAM variables
+        jsr InitPorts           ; Initialize general purpose I/O ports
         cli                     ; Enable interrupts
 
 MainLoop:
@@ -296,12 +315,39 @@ MainLoop:
         jsr ReadPot             ; Find our 'Crab Angle'
         eor DistanceNeg         ; Correct the angle if we're going backwards
         
+        ;; DEBUG
+        lda #01t
+        
         jsr DetermineQuad       ; Determine what quadrant our vector is in
         
         jsr ComputeDeltas       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
         jsr UpdatePosition      ; Updates our field position using
                                 ; 'Delta X' and 'Delta Y'
+                                
+        ;; Debug
+        lda #$58                ; ASCII 'X'
+        bsr SendByte
+        lda AbsoluteX
+        bsr SendByte
+        lda AbsoluteX+1
+        bsr SendByte
+        lda AbsoluteX+2
+        bsr SendByte
+        lda AbsoluteX+3
+        bsr SendByte
+        
+        lda #$59                ; ASCII 'Y'
+        bsr SendByte
+        lda AbsoluteY
+        bsr SendByte
+        lda AbsoluteY+1
+        bsr SendByte
+        lda AbsoluteY+2
+        bsr SendByte
+        lda AbsoluteY+3
+        bsr SendByte
+        
         bra MainLoop            ; Do it all over again
 
 **************************************************************
@@ -309,8 +355,7 @@ MainLoop:
 *              distance from the last time it was called (if any)
 **************************************************************
 ReadPhotos:
-        ;lda PHOTO_SENSOR_PORT   ; Read the photo sensors
-        lda #$01
+        lda PHOTO_SENSOR_PORT   ; Read the photo sensors
         and #$03                ; Mask off the photo sensor bits
         psha                    ; Store new reading on stack for use later
         ora LastPhotoVals       ; OR in the last readings
