@@ -343,12 +343,12 @@ SleepLoop:
 **************************************************************
 InitRAM:
         mov #0,RobotAngle
-        mov #0,AbsoluteX
-        mov #127t,{AbsoluteX+1}
+        mov #127t,AbsoluteX
+        mov #0t,{AbsoluteX+1}
         mov #0,{AbsoluteX+2}
         mov #0,{AbsoluteX+3}
-        mov #0,AbsoluteY
-        mov #127t,{AbsoluteY+1}
+        mov #127t,AbsoluteY
+        mov #0t,{AbsoluteY+1}
         mov #0,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
         mov #0,DeltaX
@@ -1039,6 +1039,15 @@ XRequest:
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
 
+        ; Check to see if the number we're sending to the RC has rolled over.
+        ; If so, just keep sending back 0 or 255 as appropriate.
+        lda AbsoluteX
+        cmp #127t               ; Check to see if AbsoluteX+1 has rolled over
+        beq XNoRollover
+        blo SendZero
+        bhi Send255
+XNoRollover:
+
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
@@ -1056,6 +1065,15 @@ YRequest:
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
+
+        ; Check to see if the number we're sending to the RC has rolled over.
+        ; If so, just keep sending back 0 or 255 as appropriate.
+        lda AbsoluteY
+        cmp #127t               ; Check to see if AbsoluteY+1 has rolled over
+        beq YNoRollover
+        blo SendZero
+        bhi Send255
+YNoRollover:
 
         ; Check if our position has been initialized and if not
         ; send back 0
@@ -1089,6 +1107,11 @@ RCRequestDone:
 
 SendZero:
         lda #0t
+        jsr SendByte
+        bra RCRequestDone
+
+Send255:
+        lda #255t
         jsr SendByte
         bra RCRequestDone
 
