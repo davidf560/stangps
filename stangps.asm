@@ -315,6 +315,47 @@ ComputeVector:
         pulx                    ; Restore index register
         rts
 
+**************************************************************
+* UpdatePosition - Updates 'Absolute X' and 'Absolute Y' with
+*                  values from 'Delta X' and 'Delta Y'
+*                  Args: none
+**************************************************************
+UpdatePosition:
+        ; Save registers used by function
+        psha
+        
+        ; Update X coordinate first
+        lda {DeltaX+1}          ; Load LSB of DeltaX
+        add {AbsoluteX+3}       ; Add LSB of AbsoluteX
+        sta {AbsoluteX+3}       ; Store result
+        lda {DeltaX}            ; Load 2nd byte of DeltaX
+        adc {AbsoluteX+2}       ; Add LSB of AbsoluteX + carry from previous
+        sta {AbsoluteX+2}       ; Store result
+        clra                    ; Clear A (no more bytes from DeltaX)
+        adc {AbsoluteX+1}       ; Add carry from 2nd byte to 3rd byte
+        sta {AbsoltueX+1}       ; Store result
+        clra                    ; Clear A (no more bytes from DeltaX)
+        adc AbsoluteX           ; Add carry from 3rd byte to MSB
+        sta AbsoluteX           ; Store result
+        
+        ; Now update Y coordinate
+        lda {DeltaY+1}          ; Load LSB of DeltaY
+        add {AbsoluteY+3}       ; Add LSB of AbsoluteY
+        sta {AbsoluteY+3}       ; Store result
+        lda {DeltaY}            ; Load 2nd byte of DeltaY
+        adc {AbsoluteY+2}       ; Add LSB of AbsoluteY + carry from previous
+        sta {AbsoluteY+2}       ; Store result
+        clra                    ; Clear A (no more bytes from DeltaY)
+        adc {AbsoluteY+1}       ; Add carry from 2nd byte to 3rd byte
+        sta {AbsoltueY+1}       ; Store result
+        clra                    ; Clear A (no more bytes from DeltaY)
+        adc AbsoluteY           ; Add carry from 3rd byte to MSB
+        sta AbsoluteY           ; Store result
+        
+        ; Restore registers
+        pula
+        rts
+
 
 **************************************************************
 **************************************************************
