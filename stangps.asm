@@ -507,7 +507,6 @@ ReadPot:
         clrh
         stx PotValue            ; Store in RAM
         lda PotTable,X          ; Get PotToBrads(ADR)
-        eor #$FF                ; Complement to fix stupid backwards lookup table
         sta PotBrads            ; Store in RAM
         rts
 
@@ -843,7 +842,7 @@ SendByteCheckX:
         bne SendByteCheckY
         inca
         bra SendByteNow
-        
+
 SendByteCheckY:
         cmp #REQ_Y_ONLY         ; Check if byte to send is Y Only cmd
         bne SendByteNow
