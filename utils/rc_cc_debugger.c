@@ -7,7 +7,9 @@
 #include <errno.h>
 #include <termios.h>
 
-#define  ATTN_CHAR 180
+#define T_CHAR 240
+#define X_CHAR 85
+#define Y_CHAR 170
 
 int main(int argc, char **argv)
 {
@@ -51,13 +53,11 @@ int main(int argc, char **argv)
 
     num = read(fd, buf, 1);
     fflush(stdout);
-    if(buf[0] == ATTN_CHAR)
+    if((buf[0] == T_CHAR) || (buf[0] == X_CHAR) || (buf[0] == Y_CHAR))
     {
-      num = read(fd, buf, 3);
+      num = read(fd, buf+1, 1);
       if(cc) {
-        printf("\nX: %d ", buf[0]);
-        printf("Y: %d ", buf[1]);
-        printf("Theta: %d\t", buf[2]);
+        printf("%d:%d ", buf[0], buf[1]);
       }
     }
     else
