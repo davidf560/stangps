@@ -14,6 +14,7 @@
 * Version History:
 * ----------------
 * 01/31/03 David Flowerday      Initial version
+* 02/03/03 David Flowerday      Adding support for gyroscope
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -30,6 +31,10 @@ PHOTO_SENSOR_PORT EQU PORTD
 ADC_POT_CHAN EQU $1
 ADC_ENABLE EQU $80
 
+; Gyroscope Constants
+GYRO_DEGS_HIGH EQU 0t
+GYRO_DEGS_LOW EQU 27t
+
 **************************************************************
 **************************************************************
 **************************************************************
@@ -38,6 +43,12 @@ ADC_ENABLE EQU $80
 **************************************************************
 **************************************************************
         org RAMStart
+TempWord1:
+        ds $02
+TempWord2:
+        ds $02
+TempLWord:
+        ds $04
 AbsoluteX:
         ds $04
 AbsoluteY:
@@ -60,13 +71,10 @@ LastPhotoVals:
         ds $01
 NumQuadErrors:
         ds $01
-TempWord1:
-        ds $02
-TempWord2:
-        ds $02
-TempLWord:
+RobotTheta:
         ds $04
-
+GyroValNeg:
+        ds $01
 
 **************************************************************
 **************************************************************
@@ -198,6 +206,11 @@ InitRAM:
         mov #0,Distance
         mov #0,{Distance+1}
         mov #0,DistanceNeg
+        mov #0,GyroValNeg
+        mov #0,RobotTheta
+        mov #0,{RobotTheta+1}
+        mov #0,{RobotTheta+2}
+        mov #0,{RobotTheta+3}
         lda PHOTO_SENSOR_PORT
         and #$03
         asla
@@ -362,12 +375,12 @@ MainLoop:
         lda AbsoluteY+3
         bsr SendByte
         
-        lda #$45                ; ASCII 'E'
+        lda #$45                ; ASCII 'G'
         bsr SendByte
         clra
         bsr SendByte
         bsr SendByte
-        lda NumQuadErrors
+        lda RobotTheta
         bsr SendByte
         clra
         bsr SendByte
@@ -572,6 +585,70 @@ UpdateDone:
 * Interrupt Service Routines
 **************************************************************
 **************************************************************
+
+**************************************************************
+* GyroIsr - used to sample the gyroscope and update our
+*           angular robot position
+**************************************************************
+GyroIsr:
+        clr GyroValNeg          ; Initialize variable
+        lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
+        ora #ADC_ENABLE         ; Set the enable bit
+        sta ADSCR               ; Start an ADC conversion on the gyro chanel
+        brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
+        lda ADR                 ; Read gyro value
+        sub #127t               ; Convert so it's centered around 0
+        cmp #0t
+        bgt GyroPositive        ; Turning in a positive direction
+        blt GyroNegative        ; Turning in a negative direction
+        bra GyroDone            ; Not turning at all
+GyroNegative:
+        lda #$FF,GyroValNeg     ; Signal that the gyro value is negative
+        nega                    ; Convert offset to a positive number for
+                                ;   processing
+GyroPositive:
+        clr TempWord1
+        sta {TempWord1+1}       ; Store A in multiplier
+        mov #GYRO_DEGS_HIGH,TempWord2
+        mov #GYRO_DEGS_LOW,{TempWord2+1}
+        jsr UMult16             ; Multiply gyro offset by (binary degrees
+                                ;   per tick per sample)
+        lda GyroValNeg          ; Check to see if we need to add or subtract
+        bne GyroSubtract        ; Need to subtract
+        
+        ; Add new offset to current angular position
+        lda {TempLWord+3}       ; Load LSB of offset
+        add {RobotTheta+3}      ; Add LSB of RobotTheta
+        sta {RobotTheta+3}      ; Store result
+        lda {TempLWord+2}       ; Load 2nd byte of offset
+        adc {RobotTheta+2}      ; Add 2nd byte of RobotTheta + carry
+        sta {RobotTheta+2}      ; Store result
+        lda {TempLWord+1}       ; Load 3rd byte of offset
+        adc {RobotTheta+1}      ; Add carry from 2nd byte to 3rd byte
+        sta {RobotTheta+1}      ; Store result
+        lda TempLWord           ; Load MSB of offset
+        adc RobotTheta          ; Add carry from 3rd byte to MSB
+        sta RobotTheta          ; Store result
+        bra GyroDone            ; Go do the Y component now
+        
+GyroSubtract:        
+        ; Subtract new offset from angular position
+        lda {RobotTheta+3}      ; Load LSB of RobotTheta
+        sub {TempLWord+3}       ; Subtract LSB of offset
+        sta {RobotTheta+3}      ; Store result
+        lda {RobotTheta+2}      ; Load 2nd byte of RobotTheta
+        sbc {TempLWord+2}       ; Subtract 2nd byte of offset and carry bit
+        sta {RobotTheta+2}      ; Store result
+        lda {RobotTheta+1}      ; Load 3rd byte of RobotTheta
+        sbc {TempLWord+1}       ; Subtract 3rd byte of offset + carry
+        sta {RobotTheta+1}      ; Store result
+        lda RobotTheta          ; Load MSB of RobotTheta
+        sbc TempLWord           ; Subtract MSB of offset + carry
+        sta RobotTheta          ; Store result
+
+GyroDone:
+        rti        
+        
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
