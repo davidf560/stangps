@@ -1003,7 +1003,7 @@ NoExtendedCmds:
         lda LED_PORT            ; Toggle the UNKNOWN_CMD LED
         eor #LED_UNKNOWN_CMD
         sta LED_PORT
-        bra RCRequestDone
+        jmp RCRequestDone
 
 SetPositionRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
@@ -1021,14 +1021,12 @@ SetPositionRequest:
 SetWayptRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
         sta RCCurrentWaypt      ; Store current waypoint
-        bra RCRequestDone        
-        
+        bra RCRequestDone
+
 GetWayptRequest:
         ; Sleep for some time before responding
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-
         lda RCCurrentWaypt      ; Load currently stored waypoint number
         jsr SendByte            ; Send it out
         bra RCRequestDone
@@ -1037,8 +1035,6 @@ XRequest:
         ; Sleep for some time before responding
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-
         ; Check to see if the number we're sending to the RC has rolled over.
         ; If so, just keep sending back 0 or 255 as appropriate.
         lda AbsoluteX
@@ -1047,25 +1043,21 @@ XRequest:
         blo SendZero
         bhi Send255
 XNoRollover:
-
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        
-        ; RC has requested that we send position data, so we'll
-        ; do just that
+        ; Now round the integer that we'll be sending to the RC
+        ; and send it out
         lda {AbsoluteX+1}       ; Load LSB of integer portion of X
-        brclr 7,{AbsoluteX+2},NoIncX
-        inca
-NoIncX:
+        ldx {AbsoluteX+2}       ; Load MSB of fraction portion of X
+        aslx                    ; Move MSB of X into carry bit
+        adc #0                  ; Add carry bit to A
         jsr SendByte            ; Send it out
         bra RCRequestDone
 
 YRequest:
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-
         ; Check to see if the number we're sending to the RC has rolled over.
         ; If so, just keep sending back 0 or 255 as appropriate.
         lda AbsoluteY
@@ -1074,32 +1066,32 @@ YRequest:
         blo SendZero
         bhi Send255
 YNoRollover:
-
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        
+        ; Now round the integer that we'll be sending to the RC
+        ; and send it out
         lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
-        brclr 7,{AbsoluteY+2},NoIncY
-        inca
-NoIncY:
+        ldx {AbsoluteY+2}       ; Load MSB of fraction portion of Y
+        aslx                    ; Move MSB of X into carry bit
+        adc #0                  ; Add carry bit to A
         jsr SendByte            ; Send it out
         bra RCRequestDone
 
 ThetaRequest:
         mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-
         ; Check if our position has been initialized and if not
         ; send back 0
         brclr 0,PosInitialized,SendZero
-        
+        ; Now round the integer that we'll be sending to the RC
+        ; and send it out
         lda RobotTheta          ; Load LSB of integer portion of Theta
-        brclr 7,{RobotTheta+1},NoIncTheta
-        inca
-NoIncTheta:
+        ldx {RobotTheta+1}
+        aslx                    ; Move MSB of X into carry bit
+        adc #0                  ; Add carry bit to A
         jsr SendByte            ; Send it out
+
 RCRequestDone:
         lda SCS1                ; Flush receive buffer
         lda SCDR
