@@ -40,8 +40,8 @@ ADC_ENABLE              EQU $00
 POT_CENTER_VAL          EQU 127t
 
 ; Gyroscope Constants
-GYRO_DEGS_HIGH          EQU 0t
-GYRO_DEGS_LOW           EQU 28t
+GYRO_DEGS_HIGH          EQU $1e
+GYRO_DEGS_LOW           EQU $48
 
 ; Serial Communications Constants
 CC_ATTENTION_BYTE       EQU $00
@@ -236,7 +236,6 @@ InitRAM:
         mov #1,{AbsoluteY+1}
         mov #0,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
-        mov #0,AbsoluteHeading
         mov #0,DeltaX
         mov #0,{DeltaX+1}
         mov #0,DeltaY
@@ -449,52 +448,6 @@ MainLoop:
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
         jsr UpdatePosition      ; Updates our field position using
                                 ; 'Delta X' and 'Delta Y'
-
-        ;; Debug
-        lda #$58                ; ASCII 'X'
-        bsr SendByte
-        lda AbsoluteX
-        bsr SendByte
-        lda AbsoluteX+1
-        bsr SendByte
-        lda AbsoluteX+2
-        bsr SendByte
-        lda AbsoluteX+3
-        bsr SendByte
-        
-        ;;debug
-        bra MainLoop
-
-        lda #$59                ; ASCII 'Y'
-        bsr SendByte
-        lda AbsoluteY
-        bsr SendByte
-        lda AbsoluteY+1
-        bsr SendByte
-        lda AbsoluteY+2
-        bsr SendByte
-        lda AbsoluteY+3
-        bsr SendByte
-        
-        lda #$47                ; ASCII 'G'
-        bsr SendByte
-        clra
-        bsr SendByte
-        bsr SendByte
-        lda TempGyroVal
-        bsr SendByte
-        clra
-        bsr SendByte
-
-        lda #$45                ; ASCII 'E'
-        bsr SendByte
-        clra
-        bsr SendByte
-        bsr SendByte
-        lda {RobotTheta+1}
-        bsr SendByte
-        lda {RobotTheta+2}
-        bsr SendByte
 
         bra MainLoop            ; Do it all over again
 
@@ -787,19 +740,22 @@ RCRequestIsr:
         jsr GetByte             ; Read the byte that was sent to us
         cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
         bne RCRequestDone       ; Not for us - ignore it
-        
+
         ; RC has requested that we send position data, so we'll
         ; do just that
-        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
+;        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
+
+        ;;Debug
+        lda TempGyroVal
         jsr SendByte            ; Send it out
         lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
         jsr SendByte            ; Send it out
-        lda {RobotTheta+1}      ; Load LSB of integer portion of Theta
+        lda RobotTheta          ; Load LSB of integer portion of Theta
         jsr SendByte            ; Send it out
 RCRequestDone:
         rti
-        
-        
+
+
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
 *            response to an interrupt type
