@@ -41,7 +41,7 @@ ADC_ENABLE              EQU $00
 ; Potentiometer Constants
 POT_CENTER_VAL          EQU 129t
 POT_MAX_RIGHT_VAL       EQU 58t
-POT_MAX_OFFSET    EQU 64t
+POT_MAX_OFFSET          EQU 64t
 BRADS_PER_TICK_H        EQU 0t
 BRADS_PER_TICK_L        EQU 231t
 
@@ -59,7 +59,7 @@ GYRO_NDEGS_HIGH         EQU $23
 GYRO_NDEGS_LOW          EQU $1F
 
 ; Serial Communications Constants
-CC_ATTENTION_BYTE       EQU $06
+CC_ATTENTION_BYTE       EQU 180t
 
 **************************************************************
 **************************************************************
@@ -568,6 +568,9 @@ ReadPot:
 ComputeHeading:
         add RobotTheta          ; Add in our robot's orientation
                                 ; (measured in brads)
+        brclr 7,{RobotTheta+1},NoIncHeading
+        inca
+NoIncHeading:
         sta AbsHeading
         rts
 
@@ -782,7 +785,8 @@ GyroPositive2:
         jsr IUMult16            ; Multiply gyro offset by (binary degrees
                                 ;   per tick per sample)
         lda GyroValNeg          ; Check to see if we need to add or subtract
-        bne GyroSubtract        ; Need to subtract
+        beq GyroSubtract        ; Need to add (when gyro is negative, we want to
+                                ; *increment* our position)
 
         ; Add new offset to current angular position
         lda {ITempLWord+3}      ; Load LSB of offset
@@ -834,7 +838,7 @@ RCRequestIsr:
 
         ; Sleep for some time before responding
         mov #$00,T2MODH
-        mov #$39,T2MODL         ; Set up for ?? second timeout
+        mov #$13,T2MODL         ; Set up for ?? second timeout
         mov #$06,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
@@ -842,10 +846,29 @@ RCRequestIsr:
         ; RC has requested that we send position data, so we'll
         ; do just that
         lda {AbsoluteX+2}       ; Load LSB of integer portion of X
+        brclr 7,{AbsoluteX+3},NoIncX
+        inca
+NoIncX:
         jsr SendByte            ; Send it out
+
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
         lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
+        brclr 7,{AbsoluteX+3},NoIncY
+        inca
+NoIncY:
         jsr SendByte            ; Send it out
+
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
         lda RobotTheta          ; Load LSB of integer portion of Theta
+        brclr 7,{RobotTheta+1},NoIncTheta
+        inca
+NoIncTheta:
         jsr SendByte            ; Send it out
 RCRequestDone:
         rti
