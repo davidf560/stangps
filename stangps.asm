@@ -741,46 +741,46 @@ IUMult16:
         ais #-6                 ; Reserve 6 bytes on stack for local storage
         clr 6,SP                ; Clear the byte used for multiplication carry
         ; Calculate first intermediate result
-        ldx {ITempWord1+1}       ; Load X with multiplier LSB
-        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        ldx {ITempWord1+1}      ; Load X with multiplier LSB
+        lda {ITempWord2+1}      ; Load A with multiplicand LSB
         mul                     ; Multiply
         stx 6,SP                ; Save carry from multiply
-        sta {ITempLWord+3}       ; Store LSB of final result
-        ldx ITempWord1           ; Load X with multiplier MSB
-        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        sta {ITempLWord+3}      ; Store LSB of final result
+        ldx ITempWord1          ; Load X with multiplier MSB
+        lda {ITempWord2+1}      ; Load A with multiplicand LSB
         mul                     ; Multiply
         add 6,SP                ; Add carry from previous multiply
         sta 2,SP                ; Store 2nd byte of interm. result 1
-        bcc IUMult16_2           ; Check for carry from addition
+        bcc IUMult16_2          ; Check for carry from addition
         incx                    ; Increment MSB of interm. result 1
 IUMult16_2:
         stx 1,SP                ; Store MSB of interm. result 1
         clr 6,SP                ; Clear the byte used for multiplication carry
         ; Calculate second intermediate result
-        ldx {ITempWord1+1}       ; Load X with multiplier LSB
-        lda ITempWord2           ; Load A with multiplicand MSB
+        ldx {ITempWord1+1}      ; Load X with multiplier LSB
+        lda ITempWord2          ; Load A with multiplicand MSB
         mul                     ; Multiply
         stx 6,SP                ; Save carry from multiply
         sta 5,SP                ; Store LSB of interm. result 2
-        ldx ITempWord1           ; Load X with multiplier MSB
-        lda ITempWord2           ; Load A with multiplicand MSB
+        ldx ITempWord1          ; Load X with multiplier MSB
+        lda ITempWord2          ; Load A with multiplicand MSB
         mul                     ; Multiply
         add 6,SP                ; Add carry from previous multiply
         sta 4,SP                ; Store 2nd byte of interm. result 2
-        bcc IUMult16_3           ; Check for carry from addition
+        bcc IUMult16_3          ; Check for carry from addition
         incx                    ; Increment MSB of interm. result 2
 IUMult16_3:
         stx 3,SP                ; Store MSB of interm. result 2
         ; Add interm. result 1 & 2 and store total in TempLWord
         lda 2,SP                ; Load A with 2nd byte of result 1
         add 5,SP                ; Add LSB of result 2
-        sta {ITempLWord+2}       ; Store 2nd byte of final result
+        sta {ITempLWord+2}      ; Store 2nd byte of final result
         lda 1,SP                ; Load A with MSB of result 1
         adc 4,SP                ; Add w/carry 2nd byte of result 2
-        sta {ITempLWord+1}       ; Store 3rd byte of final result
+        sta {ITempLWord+1}      ; Store 3rd byte of final result
         lda 3,SP                ; Load A with MSB from result 2
         adc #0                  ; Add carry from previous result
-        sta ITempLWord           ; Store MSB of final result
+        sta ITempLWord          ; Store MSB of final result
         ; Restore registers
         ais #6                  ; Deallocate local storage from stack
         pulx
