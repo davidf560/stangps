@@ -1,3 +1,20 @@
+**************************************************************
+* sinetable.asm
+* -----------
+*
+* Sine Lookup Table
+*  This is a sine table of "binary degrees".  A
+*  "binary degree" is measured 0-255 instead of 0-359.
+*
+*
+* Copyright 2003 WildStang Robotics Team
+*
+*
+* Version History:
+* ----------------
+* 02/01/03 David Flowerday      Initial version
+**************************************************************
+SineTable:
         db #$00                 ; sin(0)
         db #$06                 ; sin(1)
         db #$0c                 ; sin(2)
