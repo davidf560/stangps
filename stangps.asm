@@ -29,8 +29,8 @@ DISTANCE_RES_LOW EQU 0t
 DISTANCE_RES_HIGH EQU $1
 PHOTO_SENSOR_PORT EQU PORTD
 ADC_POT_CHAN EQU $1
-ADC_GYRO_CHAN EQU $2
-ADC_ENABLE EQU $80
+ADC_GYRO_CHAN EQU $0
+ADC_ENABLE EQU $00
 
 ; Gyroscope Constants
 GYRO_DEGS_HIGH EQU 0t
@@ -168,6 +168,13 @@ QError:
 * Initialization Functions
 **************************************************************
 **************************************************************
+
+**************************************************************
+* InitADC - Initializes the Analog to Digital Converter
+**************************************************************
+InitADC:
+        mov #$60,ADCLK          ; Select external clock, divided by 8
+        rts
 
 **************************************************************
 * InitGyroTimer - Initializes the gyro timer (timer 1)
@@ -344,6 +351,7 @@ Main:
         jsr InitPorts           ; Initialize general purpose I/O ports
         jsr InitSCI             ; Initialize the Serial Comm. Interface
         jsr InitRAM             ; Initialize RAM variables
+        jsr InitADC
         jsr InitGyroTimer       ; Initialize the gyroscope timer
         cli                     ; Enable interrupts
 
@@ -353,6 +361,7 @@ MainLoop:
 
         ;; DEBUG
         lda #0t
+        ;; END DEBUG
 
         eor DistanceNeg         ; Correct the angle if we're going backwards
 
@@ -390,7 +399,7 @@ MainLoop:
         clra
         bsr SendByte
         bsr SendByte
-        lda RobotTheta
+        lda {RobotTheta+1}
         bsr SendByte
         clra
         bsr SendByte
