@@ -41,7 +41,7 @@ LED_UNKNOWN_CMD         EQU $02
 LED_VALID_CMD           EQU $04
 LED_GYRO_INT            EQU $08
 LED_UNUSED1             EQU $10
-LED_UNUSED2             EQU $20
+LED_GETB_TIMEOUT        EQU $20
 LED_XYT_RECVD           EQU $40
 LED_WARM_RESET          EQU $80
 
@@ -840,6 +840,9 @@ GetByteTimeoutLoop:
         brclr 7,T2SC,GetByteTimeoutLoop
         ; At this point we did not receive the byte in time
         sec                     ; No byte received so set carry bit
+        lda LED_PORT
+        eor #LED_GETB_TIMEOUT
+        sta LED_PORT
         rts
 GotByte:
         mov #$36,T2SC           ; Reset Timer 1
@@ -984,6 +987,22 @@ GyroDone:
 * RCRequestIsr - used when the Robot Controller requests a
 *                positioning update
 **************************************************************
+SetPositionRequest:
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        sta {AbsoluteX+1}
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for another byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        sta {AbsoluteY+1}
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for last byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
+        sta RobotTheta
+        mov #$FF,PosInitialized ; Indicate that our position has been inited
+        lda LED_PORT            ; Signal by an LED that we're linked up
+        eor #LED_XYT_RECVD
+        sta LED_PORT
+        bra RCRequestDone
+
 RCRequestIsr:
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
@@ -1009,23 +1028,11 @@ NoExtendedCmds:
         lda LED_PORT            ; Toggle the UNKNOWN_CMD LED
         eor #LED_UNKNOWN_CMD
         sta LED_PORT
-        jmp RCRequestDone
 
-SetPositionRequest:
-        jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
-        sta {AbsoluteX+1}
-        jsr GetByteWithTimeout  ; Wait 2 milliseconds for another byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
-        sta {AbsoluteY+1}
-        jsr GetByteWithTimeout  ; Wait 2 milliseconds for last byte
-        bcs RCRequestDone       ; If carry bit set then GetByte timed out
-        sta RobotTheta
-        mov #$FF,PosInitialized ; Indicate that our position has been inited
-        lda LED_PORT            ; Signal by an LED that we're linked up
-        eor #LED_XYT_RECVD
-        sta LED_PORT
-        bra RCRequestDone
+RCRequestDone:
+        lda SCS1                ; Flush receive buffer
+        lda SCDR
+        rti
 
 SetWayptRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
@@ -1101,11 +1108,7 @@ ThetaRequest:
         aslx                    ; Move MSB of X into carry bit
         adc #0                  ; Add carry bit to A
         jsr SendByte            ; Send it out
-
-RCRequestDone:
-        lda SCS1                ; Flush receive buffer
-        lda SCDR
-        rti
+        bra RCRequestDone
 
 SendZero:
         lda #0t
