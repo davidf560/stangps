@@ -21,8 +21,8 @@ int main(int argc, char **argv)
   tcgetattr(fd, &opts);
   opts.c_lflag &= ~(ICANON | ECHO | ISIG);
   opts.c_cflag |= (CLOCAL | CREAD);
-  cfsetispeed(&opts, B38400);
-  cfsetospeed(&opts, B38400);
+  cfsetispeed(&opts, B9600);
+  cfsetospeed(&opts, B9600);
   opts.c_cflag &= ~CRTSCTS;
   opts.c_iflag |= (INPCK | ISTRIP);
   opts.c_iflag &= ~(IXON | IXOFF | IXANY);
