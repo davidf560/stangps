@@ -51,7 +51,7 @@ DISTANCE_RES_HIGH       EQU $4B
 DISTANCE_RES_LOW        EQU $C0
 
 ; Analog to Digital Converter Constants
-ADC_POT_CHAN            EQU $1
+ADC_POT_CHAN            EQU $2
 ADC_GYRO_CHAN           EQU $0
 ADC_ENABLE              EQU $00
 
@@ -270,7 +270,7 @@ InitPorts:
 **************************************************************
 InitSCI:
         lda SCS1
-        mov #$05,SCBR           ; Baud Rate = 4800 (at 9.8MHz clock)
+        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
         mov #$2C,SCC2           ; Enable the SCI for TX and RX
         mov #$00,SCC3           ; No SCC error interrupts, please
@@ -332,6 +332,7 @@ Sleep500msec:
 SleepLoop:
         sta COPCTL              ; Kick watchdog
         brclr 7,T2SC,SleepLoop  ; Busy loop until timer expires
+        rts
 
 
 **************************************************************
@@ -425,7 +426,7 @@ Main:
         sta COPCTL              ; Kick watchdog
 
         ; Initialize registers
-        mov #$08,CONFIG1        ; Enable COP, enable LVI reset,
+        mov #$09,CONFIG1        ; Disable COP, enable LVI reset,
                                 ; enable 5 volt LVI thresholds
         mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
@@ -454,7 +455,7 @@ MainLoop:
         sta COPCTL              ; Kick watchdog
 
         jsr DataRequestHandler  ; Handle the data request if present
-        
+
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
         jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
@@ -483,6 +484,7 @@ ReadPhotos:
         ldx #$03
         mul                     ; Multiply by 3 for jump table purposes
         tax                     ; Move table index into index register
+        clrh
         jsr QuadratureTable,X   ; Look up the state transition
         pula                    ; Pull new reading back off stack
         asla                    ; Shift new readings into old readings place
@@ -502,6 +504,7 @@ ReadPot:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         ldx ADR                 ; Read ADC value
         cli
+        clrh
         stx PotValue            ; Store in RAM
         lda PotTable,X          ; Get PotToBrads(ADR)
         sta PotBrads            ; Store in RAM
@@ -535,6 +538,7 @@ ComputeDeltas:
         ; Find Delta Y
         ldx #2
         mul                     ; Multiply A by 2
+        clrh
         tax                     ; Transfer direction to index register
         lda {SineTable+1},X     ; Look up sin(direction)
         sta {TempWord1+1}       ; Store LSB of sin(dir) in TempWord1
@@ -555,6 +559,7 @@ ComputeDeltas:
         sub #64t                ; A = A - 90 degrees
         ldx #2
         mul                     ; Multiply A by 2
+        clrh
         tax                     ; Transfer direction to index register
         lda {SineTable+1},X     ; Look up sin(direction) (== cos(dir))
         sta {TempWord1+1}       ; Store LSB of sin(dir) in TempWord1
@@ -694,7 +699,7 @@ SleepRCDelayLoop:
         brclr 7,T2SC,SleepRCDelayLoop
         mov #$36,T2SC           ; Reset Timer 1
         rts
-        
+
 **************************************************************
 * DataRequestHandler - Handles a request for data.  Called by
 *                      MainLoop.
@@ -769,7 +774,7 @@ XRequest:
         bsr Round               ; Round value in A if necessary
         jsr SendByte            ; Send out rounded value of X
         rts
-        
+
 YRequest:
         jsr SleepRCDelay        ; Sleep to let RC catch up
         lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
@@ -777,7 +782,7 @@ YRequest:
         bsr Round               ; Round value in A if necessary
         jsr SendByte            ; Send out rounded value of Y
         rts
-        
+
 ThetaRequest:
         jsr SleepRCDelay        ; Sleep to let RC catch up
         lda RobotTheta          ; Load LSB of integer portion of Theta
@@ -1078,6 +1083,7 @@ DataRequestIsr:
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
         sta LED_PORT            ; Change the display
+        lda SCS1
         lda SCDR                ; Read character
         sta DataRequest         ; Store into global var to signal request
         rti
