@@ -28,8 +28,9 @@ FLASHStart              EQU $8000
 VectorStart             EQU $FFDC
 
 ; Photo Sensor Constants
-DISTANCE_RES_LOW        EQU 0t
-DISTANCE_RES_HIGH       EQU $1
+; 0.29452431127404311610587281718245
+DISTANCE_RES_HIGH       EQU 0t
+DISTANCE_RES_LOW        EQU 75t
 PHOTO_SENSOR_PORT       EQU PORTD
 
 ; Analog to Digital Converter Constants
@@ -41,11 +42,18 @@ ADC_ENABLE              EQU $00
 POT_CENTER_VAL          EQU 127t
 
 ; Gyroscope Constants
-GYRO_DEGS_HIGH          EQU $1e
-GYRO_DEGS_LOW           EQU $48
+; First set is for 64 degs/sec gyro
+;GYRO_DEGS_HIGH          EQU $1e
+;GYRO_DEGS_LOW           EQU $48
+; This set is for 75 degs/sec gyro (needs different factor
+; for positive versus negative for some reason)
+GYRO_PDEGS_HIGH           EQU $23
+GYRO_PDEGS_LOW            EQU $AC
+GYRO_NDEGS_HIGH           EQU $23
+GYRO_NDEGS_LOW            EQU $1F
 
 ; Serial Communications Constants
-CC_ATTENTION_BYTE       EQU $00
+CC_ATTENTION_BYTE       EQU $06
 
 **************************************************************
 **************************************************************
@@ -273,12 +281,12 @@ InitRAM:
         beq InitRAMDone         ; RAM should still be good, don't initialize
         mov #0,RobotAngle
         mov #0,AbsoluteX
-        mov #1,{AbsoluteX+1}
-        mov #0,{AbsoluteX+2}
+        mov #0,{AbsoluteX+1}
+        mov #127t,{AbsoluteX+2}
         mov #0,{AbsoluteX+3}
         mov #0,AbsoluteY
-        mov #1,{AbsoluteY+1}
-        mov #0,{AbsoluteY+2}
+        mov #0,{AbsoluteY+1}
+        mov #127t,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
         mov #0,DeltaX
         mov #0,{DeltaX+1}
@@ -293,6 +301,8 @@ InitRAM:
         mov #0,{RobotTheta+2}
         mov #0,{RobotTheta+3}
         mov #0,GyroLoopCount
+        mov #0,GyroCenter
+        mov #0,{GyroCenter+1}
         mov #0,PotValue
         lda PHOTO_SENSOR_PORT
         and #$03
@@ -484,10 +494,6 @@ MainLoop:
         jsr ReadPot             ; Find our 'Crab Angle'
         jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
                                 ; and our 'Robot Theta'
-
-        ;; DEBUG
-        lda #0t
-        ;; END DEBUG
 
         eor DistanceNeg         ; Correct the angle if we're going backwards
 
@@ -745,11 +751,15 @@ GyroNegative:
         mov #$FF,GyroValNeg     ; Signal that the gyro value is negative
         nega                    ; Convert offset to a positive number for
                                 ;   processing
+        mov #GYRO_NDEGS_HIGH,ITempWord2
+        mov #GYRO_NDEGS_LOW,{ITempWord2+1}
+        bra GyroPositive2
 GyroPositive:
+        mov #GYRO_PDEGS_HIGH,ITempWord2
+        mov #GYRO_PDEGS_LOW,{ITempWord2+1}
+GyroPositive2:
         clr ITempWord1
         sta {ITempWord1+1}      ; Store A in multiplier
-        mov #GYRO_DEGS_HIGH,ITempWord2
-        mov #GYRO_DEGS_LOW,{ITempWord2+1}
         jsr IUMult16            ; Multiply gyro offset by (binary degrees
                                 ;   per tick per sample)
         lda GyroValNeg          ; Check to see if we need to add or subtract
@@ -799,16 +809,24 @@ RCRequestIsr:
         jsr GetByte             ; Read the byte that was sent to us
         cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
         bne RCRequestDone       ; Not for us - ignore it
+        lda PORTA               ; Read the LED states
+        eor #$04                ; Toggle the lowest bit
+        sta PORTA               ; Change the display
+
+        ; Sleep for some time before responding
+        mov #$00,T2MODH
+        mov #$39,T2MODL         ; Set up for ?? second timeout
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
 
         ; RC has requested that we send position data, so we'll
         ; do just that
 ;        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
-
-        ;;Debug
         lda TempGyroVal
         jsr SendByte            ; Send it out
 ;        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
-        lda PotValue
+        lda GyroCenter
         jsr SendByte            ; Send it out
         lda RobotTheta          ; Load LSB of integer portion of Theta
         jsr SendByte            ; Send it out
