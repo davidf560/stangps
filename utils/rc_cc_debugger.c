@@ -53,11 +53,28 @@ int main(int argc, char **argv)
 
     num = read(fd, buf, 1);
     fflush(stdout);
-    if((buf[0] == T_CHAR) || (buf[0] == X_CHAR) || (buf[0] == Y_CHAR))
+    if(buf[0] == X_CHAR)
     {
-      num = read(fd, buf+1, 1);
-      if(cc) {
-        printf("%d:%d ", buf[0], buf[1]);
+      num = read(fd, buf, 1);
+      if(cc)
+      {
+        printf("X:%d ", buf[0]);
+      }
+    }
+    else if(buf[0] == Y_CHAR)
+    {
+      num = read(fd, buf, 1);
+      if(cc)
+      {
+        printf("Y:%d ", buf[0]);
+      }
+    }
+    else if(buf[0] == T_CHAR)
+    {
+      num = read(fd, buf, 1);
+      if(cc)
+      {
+        printf("T:%d ", buf[0]);
       }
     }
     else
