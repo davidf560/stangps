@@ -25,9 +25,25 @@ $INCLUDE 'gpgpregs.inc'         ; Processor defines
 **************************************************************
 **************************************************************
 **************************************************************
-        org BootRAMStart
-FlashRowSource:
+        org RAMStart
+AbsoluteX:
+        ds $04
+AbsoluteY:
+        ds $04
+DeltaX:
         ds $02
+DeltaY:
+        ds $02
+Distance:
+        ds $02
+DistanceNeg:
+        ds $01
+TempWord1:
+        ds $02
+TempWord2:
+        ds $02
+TempLWord:
+        ds $04
 
 
 **************************************************************
@@ -37,7 +53,7 @@ FlashRowSource:
 **************************************************************
 **************************************************************
 **************************************************************
-        org BootFLASHStart
+        org FLASHStart
         
 **************************************************************
 **************************************************************
@@ -82,7 +98,11 @@ QNoChange:
 *              the position
 **************************************************************
 QIncrement:
-        inca
+        lda #DISTANCE_RES_LOW   ; Low byte of distance resolution
+        sta {Distance+1}
+        lda #DISTANCE_RES_HIGH  ; High byte of distance resolution
+        sta Distance
+        clr DistanceNeg         ; Distance is not negative
         rts                     ; Return to main loop
         
 **************************************************************
@@ -90,7 +110,11 @@ QIncrement:
 *              the position
 **************************************************************
 QDecrement:
-        deca
+        lda #DISTANCE_RES_LOW   ; Low byte of distance resolution
+        sta {Distance+1}
+        lda #DISTANCE_RES_HIGH  ; High byte of distance resolution
+        sta Distance
+        mov #$80,DistanceNeg    ; Distance is negative
         rts                     ; Return to main loop
         
 **************************************************************
@@ -240,6 +264,7 @@ MainLoop:
         jsr ReadPots            ; Find our 'Crab Angle'
         psha                    ; Store 'Crab Angle' on stack
         lda RobotAngle          ; Load the 'Robot Angle' from gyroscope
+        eor DistanceNeg         ; Correct the angle if we're going backwards
         psha                    ; Store 'Robot Angle' on stack
         jsr ComputeVector       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
