@@ -169,6 +169,15 @@ QError:
 **************************************************************
 
 **************************************************************
+* InitGyroTimer - Initializes the gyro timer (timer 1)
+**************************************************************
+InitGyroTimer:
+        mov #$00,T1MODH
+        mov #$26,T1MODL         ; Set up for ~1ms interrupts
+        mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
+        rts
+
+**************************************************************
 * InitSCI - Turns on the asyncronous communications port
 *           for TX, RX at specified baud N81
 **************************************************************
@@ -677,7 +686,7 @@ DummyIsr:
         dw DummyIsr             ; TIM2 Overflow Vector
         dw DummyIsr             ; TIM2 Channel 1 Vector
         dw DummyIsr             ; TIM2 Channel 0 Vector
-        dw DummyIsr             ; TIM1 Overflow Vector
+        dw GyroIsr              ; TIM1 Overflow Vector
         dw DummyIsr             ; TIM1 Channel 1 Vector
         dw DummyIsr             ; TIM1 Channel 0 Vector
         dw DummyIsr             ; PLL Vector
