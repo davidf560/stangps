@@ -88,7 +88,9 @@ REQ_THETA_ONLY          EQU 181t
 REQ_GET_WAYPT           EQU 182t
 REQ_SET_WAYPT           EQU 183t
 REQ_EVERYTHING          EQU 184t
-REQ_DEBUG               EQU 185t
+REQ_RESETREASON         EQU 185t
+REQ_DEBUG               EQU 186t
+REQ_INVALID             EQU 255t
 
 **************************************************************
 **************************************************************
@@ -151,6 +153,8 @@ PotBrads:
 ResetStatus:
         ds $01
 RCCurrentWaypt:
+        ds $01
+DataRequest:
         ds $01
 
 **************************************************************
@@ -264,7 +268,7 @@ InitPorts:
 **************************************************************
 InitSCI:
         lda SCS1
-        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
+        mov #$05,SCBR           ; Baud Rate = 4800 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
         mov #$2C,SCC2           ; Enable the SCI for TX and RX
         mov #$00,SCC3           ; No SCC error interrupts, please
@@ -284,7 +288,7 @@ InitADC:
 CheckRSR:
         lda SRSR                ; Read Reset Status Register
         sta ResetStatus         ; Store for later
-        and #%11000110          ; Check for a reason that would invalidate RAM
+        and #%11000100          ; Check for a reason that would invalidate RAM
         bne NoWarmReset         ; Branch if RAM is invalid
         lda LED_PORT            ; Load state of LEDs
         eor #LED_WARM_RESET     ; Set Warm Reset LED bit
@@ -360,6 +364,7 @@ InitRAM:
         mov #0,{GyroCenter+1}
         mov #0,PotValue
         mov #0,RCCurrentWaypt
+        mov #REQ_INVALID,DataRequest
         lda PHOTO_SENSOR_PORT
         and #$03
         asla
@@ -418,7 +423,7 @@ Main:
         sta COPCTL              ; Kick watchdog
 
         ; Initialize registers
-        mov #$28,CONFIG1        ; Enable COP, disable LVI reset,
+        mov #$08,CONFIG1        ; Enable COP, enable LVI reset,
                                 ; enable 5 volt LVI thresholds
         mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
@@ -442,6 +447,13 @@ WarmReset:
 MainLoop:
         sta COPCTL              ; Kick watchdog
 
+        lda DataRequest         ; Check for a data request
+        mov #REQ_INVALID,DataRequest
+        cmp #REQ_INVALID        ; Compare to invalid request
+        beq NoRequestPresent    ; No request present if A == REQ_INVALID
+        jsr DataRequestHandler  ; Handle the data request
+        
+NoRequestPresent:
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
         jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
@@ -681,6 +693,131 @@ UpdateDone:
         pula
         rts
 
+SleepRCDelay:
+        mov #$00,T2MODH
+        mov #$09,T2MODL         ; Set up for .5 ms timeout
+        mov #$06,T2SC           ; Timer 1 Started
+SleepRCDelayLoop:
+        sta COPCTL              ; Kick watchdog
+        brclr 7,T2SC,SleepRCDelayLoop
+        mov #$36,T2SC           ; Reset Timer 1
+        rts
+        
+**************************************************************
+* DataRequestHandler - Handles a request for data.  Called by
+*                      MainLoop.
+**************************************************************
+DataRequestHandler:
+        cmp #REQ_XYTHETA        ; Compare to X, Y, theta request
+        beq XYThetaRequest      ; Request for X, Y, and Theta information
+        cmp #REQ_THETA_ONLY     ; Compare to theta only request
+        beq ThetaRequest
+        cmp #REQ_GET_WAYPT      ; Request to retrieve current waypoint
+        beq GetWaypoint
+        cmp #REQ_SET_WAYPT      ; Request to set current waypoint
+        beq SetWaypoint
+        cmp #REQ_EVERYTHING     ; Send back everything we know
+        beq AllRequest
+        cmp #REQ_RESETREASON    ; Reset Status Register request
+        beq RSRRequest
+        cmp #REQ_DEBUG          ; Debug request
+        beq DebugRequest
+        ; If we've reached this point, then the received byte
+        ; did not match any of our command bytes - toggle an LED
+        ; to indicate that
+        lda LED_PORT            ; Read the LED states
+        eor #LED_UNKNOWN_CMD    ; Toggle the "Unknown Command" LED
+        sta LED_PORT            ; Change the LED display
+DataRequestDone:
+        ; Clear out the receive buffer to get rid of our own echo if
+        ; it's there
+        lda SCS1                ; Read SCI Status Register 1
+        lda SCDR                ; Read serial data register
+        rts
+
+XYThetaRequest:
+        ; Sleep for some time before continuing so RC doesn't get swamped
+        jsr SleepRCDelay
+        lda {AbsoluteX+1}       ; Load LSB of integer portion of X
+        brclr 7,{AbsoluteX+2},NoIncX
+        inca
+NoIncX:
+        jsr SendByte            ; Send it out
+        jsr SleepRCDelay        ; Sleep to allow RC to catch up
+        lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
+        brclr 7,{AbsoluteY+2},NoIncY
+        inca
+NoIncY:
+        jsr SendByte            ; Send it out
+ThetaRequest:                   ; Label used if only theta is requested
+        lda LED_PORT            ; Read the LED states
+        eor #LED_VALID_CMD      ; Toggle the lowest bit
+        sta LED_PORT            ; Change the display
+        jsr SleepRCDelay        ; Sleep to allow RC to catch up
+        lda RobotTheta          ; Load LSB of integer portion of Theta
+        brclr 7,{RobotTheta+1},NoIncTheta
+        inca
+NoIncTheta:
+        jsr SendByte            ; Send it out
+        bra DataRequestDone     ; All done
+
+GetWaypoint:
+        ; Sleep for some time before continuing so RC doesn't get swamped
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)        mov #$36,T2SC           ; Reset Timer 1
+        lda RCCurrentWaypt      ; Load RC's current waypoint
+        jsr SendByte            ; Send it out
+        bra DataRequestDone     ; All done
+
+SetWaypoint:
+        jsr GetByte             ; Read in waypoint # from RC
+        sta RCCurrentWaypt      ; Store it in our RAM
+        bra DataRequestDone     ; All done
+
+DebugRequest:
+        ;stop                    ; Should cause illegal opcode reset
+        jmp DataRequestDone
+
+RSRRequest:
+        lda ResetStatus
+        jsr SendByte
+        jmp DataRequestDone
+
+AllRequest:
+        lda AbsoluteX
+        jsr SendByte
+        lda {AbsoluteX+1}
+        jsr SendByte
+        lda {AbsoluteX+2}
+        jsr SendByte
+        lda {AbsoluteX+3}
+        jsr SendByte
+        lda AbsoluteY
+        jsr SendByte
+        lda {AbsoluteY+1}
+        jsr SendByte
+        lda {AbsoluteY+2}
+        jsr SendByte
+        lda {AbsoluteY+3}
+        jsr SendByte
+        lda RobotTheta
+        jsr SendByte
+        lda {RobotTheta+1}
+        jsr SendByte
+        lda {RobotTheta+2}
+        jsr SendByte
+        lda {RobotTheta+3}
+        jsr SendByte
+        lda GyroValue
+        jsr SendByte
+        lda PotBrads
+        jsr SendByte
+        lda PotValue
+        jsr SendByte
+        lda ResetStatus
+        jsr SendByte
+        jmp DataRequestDone     ; All done
+
 
 **************************************************************
 **************************************************************
@@ -808,6 +945,7 @@ IUMult16_3:
 * GetByte - Get byte and return it in accumulator
 **************************************************************
 GetByte:
+        sta COPCTL              ; Kick watchdog
         lda SCS1                ; Check to see if character is available
         and #$20                ; $20 = Receiver Full bit
         beq GetByte
@@ -818,7 +956,8 @@ GetByte:
 * SendByte - Send the byte in Accum out the serial port
 **************************************************************
 SendByte:
-        brclr 7,SCS1,$          ; Wait until xmitter is ready.
+        sta COPCTL              ; Kick watchdog
+        brclr 7,SCS1,SendByte   ; Wait until xmitter is ready.
         sta SCDR                ; Xmit it our serial port
         rts
 
@@ -912,123 +1051,12 @@ GyroDone:
 *                  positioning update
 **************************************************************
 DataRequestIsr:
-        mov #$00,T2MODH
-        mov #$13,T2MODL         ; Set up for .5 ms timeout
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
         sta LED_PORT            ; Change the display
-        jsr GetByte             ; Read the byte that was sent to us
-        cmp #REQ_XYTHETA        ; Compare to X, Y, theta request
-        beq XYThetaRequest      ; Request for X, Y, and Theta information
-        cmp #REQ_THETA_ONLY     ; Compare to theta only request
-        beq ThetaRequest
-        cmp #REQ_GET_WAYPT      ; Request to retrieve current waypoint
-        beq GetWaypoint
-        cmp #REQ_SET_WAYPT      ; Request to set current waypoint
-        beq SetWaypoint
-        cmp #REQ_EVERYTHING     ; Send back everything we know
-        beq AllRequest
-        cmp #REQ_DEBUG          ; Debug request
-        beq DebugRequest
-        ; If we've reached this point, then the received byte
-        ; did not match any of our command bytes - toggle an LED
-        ; to indicate that
-        lda LED_PORT            ; Read the LED states
-        eor #LED_UNKNOWN_CMD    ; Toggle the "Unknown Command" LED
-        sta LED_PORT            ; Change the LED display
-DataRequestDone:
-        ; Clear out the receive buffer to get rid of our own echo if
-        ; it's there
-        lda SCS1                ; Read SCI Status Register 1
-        lda SCDR                ; Read serial data register
+        lda SCDR                ; Read character
+        sta DataRequest         ; Store into global var to signal request
         rti
-
-XYThetaRequest:
-        ; Sleep for some time before continuing so RC doesn't get swamped
-        mov #$06,T2SC           ; Timer 1 Started
-        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-        lda {AbsoluteX+1}       ; Load LSB of integer portion of X
-        brclr 7,{AbsoluteX+2},NoIncX
-        inca
-NoIncX:
-        jsr SendByte            ; Send it out
-        ; Sleep for some time before continuing so RC doesn't get swamped
-        mov #$06,T2SC           ; Timer 1 Started
-        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-        lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
-        brclr 7,{AbsoluteX+2},NoIncY
-        inca
-NoIncY:
-        jsr SendByte            ; Send it out
-ThetaRequest:                   ; Label used if only theta is requested
-        lda LED_PORT            ; Read the LED states
-        eor #LED_VALID_CMD      ; Toggle the lowest bit
-        sta LED_PORT            ; Change the display
-        ; Sleep for some time before continuing so RC doesn't get swamped
-        mov #$06,T2SC           ; Timer 1 Started
-        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-        lda RobotTheta          ; Load LSB of integer portion of Theta
-        brclr 7,{RobotTheta+1},NoIncTheta
-        inca
-NoIncTheta:
-        jsr SendByte            ; Send it out
-        bra DataRequestDone     ; All done
-
-GetWaypoint:
-        ; Sleep for some time before continuing so RC doesn't get swamped
-        mov #$06,T2SC           ; Timer 1 Started
-        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
-        mov #$36,T2SC           ; Reset Timer 1
-        lda RCCurrentWaypt      ; Load RC's current waypoint
-        jsr SendByte            ; Send it out
-        bra DataRequestDone     ; All done
-
-SetWaypoint:
-        jsr GetByte             ; Read in waypoint # from RC
-        sta RCCurrentWaypt      ; Store it in our RAM
-        bra DataRequestDone     ; All done
-
-DebugRequest:
-        ;stop                    ; Should cause illegal opcode reset
-        jmp DataRequestDone
-
-AllRequest:
-        lda AbsoluteX
-        jsr SendByte
-        lda {AbsoluteX+1}
-        jsr SendByte
-        lda {AbsoluteX+2}
-        jsr SendByte
-        lda {AbsoluteX+3}
-        jsr SendByte
-        lda AbsoluteY
-        jsr SendByte
-        lda {AbsoluteY+1}
-        jsr SendByte
-        lda {AbsoluteY+2}
-        jsr SendByte
-        lda {AbsoluteY+3}
-        jsr SendByte
-        lda RobotTheta
-        jsr SendByte
-        lda {RobotTheta+1}
-        jsr SendByte
-        lda {RobotTheta+2}
-        jsr SendByte
-        lda {RobotTheta+3}
-        jsr SendByte
-        lda GyroValue
-        jsr SendByte
-        lda PotBrads
-        jsr SendByte
-        lda PotValue
-        jsr SendByte
-        lda ResetStatus
-        jsr SendByte
-        jmp DataRequestDone     ; All done
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
