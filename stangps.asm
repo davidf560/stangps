@@ -18,6 +18,7 @@
 * 02/04/03 David Flowerday      Adding support for potentiometer
 * 02/04/03 David Flowerday      Adding support for handling RC requests
 * 02/05/03 David Flowerday      Average gyro readings to find gyro center
+* 02/11/03 David Flowerday      Change light sensor distance to 16 bit fraction
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -28,9 +29,9 @@ FLASHStart              EQU $8000
 VectorStart             EQU $FFDC
 
 ; Photo Sensor Constants
-; 0.29452431127404311610587281718245
-DISTANCE_RES_HIGH       EQU 0t
-DISTANCE_RES_LOW        EQU 75t
+; 0.2958984375 = RC tick per light sensor tick
+DISTANCE_RES_HIGH       EQU $4B
+DISTANCE_RES_LOW        EQU $C0
 PHOTO_SENSOR_PORT       EQU PORTD
 
 ; Analog to Digital Converter Constants
@@ -599,9 +600,9 @@ ComputeDeltas:
         lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by sin(Direction)
-        lda {TempLWord+1}       ; Load integer portion of Delta Y
+        lda TempLWord           ; Load integer portion of Delta Y
         sta DeltaY              ; Store into DeltaY
-        lda {TempLWord+2}       ; Load fractional portion of Delta Y
+        lda {TempLWord+1}       ; Load fractional portion of Delta Y
         sta {DeltaY+1}          ; Store into DeltaY
 
         ; Find Delta X
@@ -619,9 +620,9 @@ ComputeDeltas:
         lda Distance            ; Load MSB of Distance
         sta TempWord2           ; Store into TempWord2
         jsr UMult16             ; Multiply Distance by cos(Direction)
-        lda {TempLWord+1}       ; Load integer portion of Delta X
+        lda TempLWord           ; Load integer portion of Delta X
         sta DeltaX              ; Store into DeltaX
-        lda {TempLWord+2}       ; Load fractional portion of Delta X
+        lda {TempLWord+1}       ; Load fractional portion of Delta X
         sta {DeltaX+1}          ; Store into DeltaX
         pulx                    ; Restore index register
         rts
