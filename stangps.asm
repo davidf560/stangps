@@ -23,6 +23,7 @@
 *                               hardware change
 * 02/24/03 David Flowerday      Added additional datasets which can be
 *                               requested using different command bytes
+* 02/27/03 David Flowerday      Enabled COP watchdog
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -304,14 +305,10 @@ CheckRSRDone:
 InitWait:
         clrx                    ; Clear the index register
         clr LED_PORT            ; Turn off all LEDs
-        mov #$25,T2MODH         ; Used to be 0x4B
-        mov #$00,T2MODL         ; Set up for .5 second delay
-        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
-        brclr 7,T2SC,$          ; Busy loop until timer expires
+        bsr Sleep500msec        ; Sleep for .5 seconds
         mov #$80,LED_PORT       ; Light up MSB of LED bargraph
 ContinueWait:
-        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
-        brclr 7,T2SC,$          ; Busy loop until timer expires
+        bsr Sleep500msec        ; Sleep for .5 seconds
         lda LED_PORT            ; Read our LED status
         cmp #$FF                ; Check to see if they're all lit
         beq InitWaitDone
@@ -319,9 +316,17 @@ ContinueWait:
         bra ContinueWait
 InitWaitDone:
         clr LED_PORT            ; Turn off all LEDs
-        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
-        brclr 7,T2SC,$          ; Busy loop until timer expires
+        bsr Sleep500msec        ; Sleep for .5 seconds
         rts
+
+Sleep500msec:
+        mov #$25,T2MODH         ; Used to be 0x4B
+        mov #$00,T2MODL         ; Set up for .5 second delay
+        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
+SleepLoop:
+        sta COPCTL              ; Kick watchdog
+        brclr 7,T2SC,SleepLoop  ; Busy loop until timer expires
+
 
 **************************************************************
 * InitRAM - Checks reset reason to determine if RAM is still
@@ -371,6 +376,7 @@ InitGyro:
         mov #$FF,LED_PORT       ; Light up all LEDs to signal sampling of gyro
         clrx                    ; Clear the index register
 InitGyroLoop:
+        sta COPCTL              ; Kick watchdog
         lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
         ora #ADC_ENABLE         ; Set the enable bit
         sta ADSCR               ; Start an ADC conversion on the gyro chanel
@@ -407,8 +413,11 @@ InitGyroTimer:
 **************************************************************
 **************************************************************
 Main:
+        ; Kick watchdog
+        sta COPCTL              ; Kick watchdog
+
         ; Initialize registers
-        mov #$29,CONFIG1        ; Disable COP, disable LVI reset,
+        mov #$28,CONFIG1        ; Enable COP, disable LVI reset,
                                 ; enable 5 volt LVI thresholds
         mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
@@ -430,6 +439,8 @@ WarmReset:
         cli                     ; Enable interrupts
 
 MainLoop:
+        sta COPCTL              ; Kick watchdog
+
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
         jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
