@@ -168,7 +168,7 @@ DataRequest:
 **************************************************************
         org FLASHStart
 $INCLUDE 'sinetable.inc'
-
+$INCLUDE 'pottable.inc'
 
 **************************************************************
 **************************************************************
@@ -500,19 +500,10 @@ ReadPot:
         sei                     ; Turn off interrupts
         sta ADSCR               ; Start an ADC conversion on the pot chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
-        lda ADR                 ; Read ADC value
-        sta PotValue            ; Store in RAM
+        ldx ADR                 ; Read ADC value
         cli
-        sub #POT_MAX_RIGHT_VAL
-        sta {TempWord1+1}       ; Prepare for multiply
-        clr TempWord1           ; Clear fraction
-        lda #BRADS_PER_TICK_H   ; Load scaling factor as multiplicand
-        sta TempWord2
-        lda #BRADS_PER_TICK_L
-        sta {TempWord2+1}
-        jsr UMult16             ; Multiply
-        lda {TempLWord+2}       ; Load crab brads into A
-        sub #POT_MAX_OFFSET     ; Convert back to straight ahead = 0 brads
+        stx PotValue            ; Store in RAM
+        lda PotTable,X          ; Get PotToBrads(ADR)
         sta PotBrads            ; Store in RAM
         rts
 
