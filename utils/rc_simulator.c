@@ -44,7 +44,8 @@ int main(int argc, char **argv)
 
     while((num = read(fd, buf, 1)) < 1);
     printf("Theta: %d\n", buf[0]);
-   
+
+    usleep(26000);
   }
 
   close(fd);
