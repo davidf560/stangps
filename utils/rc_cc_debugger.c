@@ -49,7 +49,7 @@ int main(int argc, char **argv)
     }
     else
     {
-      printf("%d", buf[0]);
+      printf("%c", buf[0]);
     }
   }
 

@@ -34,7 +34,10 @@ int main(int argc, char **argv)
   tcsetattr(fd, TCSANOW, &opts);
 
   while(1) {
-    write(fd, "\0", 1);
+    write(fd, buf, 1);
+
+    while((num = read(fd, buf, 1)) < 1);
+    printf("A: %d ", buf[0]);
 
     while((num = read(fd, buf, 1)) < 1);
     printf("X: %d ", buf[0]);
