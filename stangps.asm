@@ -19,6 +19,8 @@
 * 02/04/03 David Flowerday      Adding support for handling RC requests
 * 02/05/03 David Flowerday      Average gyro readings to find gyro center
 * 02/11/03 David Flowerday      Change light sensor distance to 16 bit fraction
+* 02/19/03 David Flowerday      Changed direction of light sensors due to
+*                               hardware change
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -40,11 +42,18 @@ ADC_GYRO_CHAN           EQU $0
 ADC_ENABLE              EQU $00
 
 ; Potentiometer Constants
-POT_CENTER_VAL          EQU 129t
-POT_MAX_RIGHT_VAL       EQU 10t
+; REAL ROBOT
+POT_CENTER_VAL          EQU 124t
+POT_MAX_RIGHT_VAL       EQU 12t
 POT_MAX_OFFSET          EQU 128t
 BRADS_PER_TICK_H        EQU 1t
-BRADS_PER_TICK_L        EQU 22t
+BRADS_PER_TICK_L        EQU 37t
+; PROTO ROBOT
+;POT_CENTER_VAL          EQU 127t
+;POT_MAX_RIGHT_VAL       EQU 13t
+;POT_MAX_OFFSET          EQU 128t
+;BRADS_PER_TICK_H        EQU 1t
+;BRADS_PER_TICK_L        EQU 30t
 
 ; Gyroscope Constants
 ; First set is for 64 degs/sec gyro
@@ -148,20 +157,20 @@ QuadratureTable:
         ; This is a lookup table used by the quadrature
         ; decoding algorithm.
         jmp QNoChange           ; 00 00 -> No change
-        jmp QIncrement          ; 00 01 -> Forward rotation
-        jmp QDecrement          ; 00 10 -> Reverse rotation
+        jmp QReverse            ; 00 01 -> Reverse rotation
+        jmp QForward            ; 00 10 -> Forward rotation
         jmp QError              ; 00 11 -> Shouldn't happen
-        jmp QDecrement          ; 01 00 -> Reverse rotation
+        jmp QForward            ; 01 00 -> Forward rotation
         jmp QNoChange           ; 01 01 -> No change
         jmp QError              ; 01 10 -> Shouldn't happen
-        jmp QIncrement          ; 01 11 -> Forward rotation
-        jmp QIncrement          ; 10 00 -> Forward rotation
+        jmp QReverse            ; 01 11 -> Reverse rotation
+        jmp QReverse            ; 10 00 -> Reverse rotation
         jmp QError              ; 10 01 -> Shouldn't happen
         jmp QNoChange           ; 00 00 -> No change
-        jmp QDecrement          ; 10 11 -> Reverse rotation
+        jmp QForward            ; 10 11 -> Forward rotation
         jmp QError              ; 11 00 -> Shouldn't happen
-        jmp QDecrement          ; 11 01 -> Reverse rotation
-        jmp QIncrement          ; 11 10 -> Forward rotation
+        jmp QForward            ; 11 01 -> Forward rotation
+        jmp QReverse            ; 11 10 -> Reverse rotation
         jmp QNoChange           ; 00 00 -> No change
 
 **************************************************************
@@ -175,10 +184,10 @@ QNoChange:
         rts                     ; Just return to the caller
 
 **************************************************************
-* QIncrement - Wheels turned forward, so increment
-*              the position
+* QForward - Wheels turned forward, so increment
+*            the position
 **************************************************************
-QIncrement:
+QForward:
         lda #DISTANCE_RES_LOW   ; Low byte of distance resolution
         sta {Distance+1}
         lda #DISTANCE_RES_HIGH  ; High byte of distance resolution
@@ -187,10 +196,10 @@ QIncrement:
         rts                     ; Return to main loop
 
 **************************************************************
-* QDecrement - Wheels turned backwards, so decrement
-*              the position
+* QReverse - Wheels turned backwards, so decrement
+*            the position
 **************************************************************
-QDecrement:
+QReverse:
         lda #DISTANCE_RES_LOW   ; Low byte of distance resolution
         sta {Distance+1}
         lda #DISTANCE_RES_HIGH  ; High byte of distance resolution
@@ -236,17 +245,19 @@ InitGyroTimer:
 *            settle down before continuing
 **************************************************************
 InitGyro:
-        mov #$80,PORTA          ; Light up MSB of LED bargraph
+;        mov #$80,PORTA          ; Light up MSB of LED bargraph
         clrx                    ; Clear the index register
         mov #$4B,T2MODH
         mov #$00,T2MODL         ; Set up for .5 second interrupts
+        ;;debug
+        bra FindGyroCenter
 RestartInitTimer:
         mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
         brclr 7,T2SC,$          ; Busy loop until timer expires
         lda PORTA               ; Read our LED status
         cmp #$FF                ; Check to see if they're all lit
         beq FindGyroCenter
-        asr PORTA               ; Shift down one more bit
+;        asr PORTA               ; Shift down one more bit
         bra RestartInitTimer
 FindGyroCenter:
         lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
@@ -266,7 +277,7 @@ FindGyroCenter:
         brclr 7,GyroCenter,NoRound
         inc GyroCenter          ; Round up because MSB of lower byte was set
 NoRound:
-        clr PORTA               ; Turn off the LEDs
+;        clr PORTA               ; Turn off the LEDs
         rts
 
 **************************************************************
@@ -288,6 +299,7 @@ InitSCI:
 **************************************************************
 InitRAM:
         lda SRSR                ; Read Reset Status Register
+        sta PORTA
         and #%11000110          ; Check for a reason that would invalidate RAM
         beq InitRAMDone         ; RAM should still be good, don't initialize
         mov #0,RobotAngle
@@ -330,7 +342,7 @@ InitRAMDone:
 **************************************************************
 InitPorts:
         mov #$FF,DDRA           ; Port A is all outputs (LEDs)
-        mov #$00,PORTA          ; Initialize all LEDs to off
+;        mov #$00,PORTA          ; Initialize all LEDs to off
         mov #$00,DDRD           ; Port D is all inputs
         mov #$03,PTDPUE         ; Enable pullup on D0 and D1
         rts
@@ -484,7 +496,8 @@ SendByte:
 **************************************************************
 Main:
         ; Initialize registers
-        mov #$01,CONFIG1        ; Disable COP
+        mov #$29,CONFIG1        ; Disable COP, disable LVI reset,
+                                ; enable 5 volt LVI thresholds
         mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
         clra                    ; Clear accumulator
@@ -755,7 +768,7 @@ GyroIsr:
         inc GyroLoopCount       ; Increment our loop count
         bne GyroNoToggleLED     ; If != 0, don't toggle LED
         lda PORTA               ; Load LED settings
-        eor #$02                ; Toggle LED 2
+        eor #$01                ; Toggle LED 1
         sta PORTA               ; Set the LEDs
 GyroNoToggleLED:
         lda T1SC                ; Load T1SC to clear TOF bit
@@ -832,13 +845,13 @@ GyroDone:
 RCRequestIsr:
         lda PORTA               ; Read the LED states
         eor #$01                ; Toggle the lowest bit
-        sta PORTA               ; Change the display
+;        sta PORTA               ; Change the display
         jsr GetByte             ; Read the byte that was sent to us
         cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
         bne RCRequestDone       ; Not for us - ignore it
         lda PORTA               ; Read the LED states
         eor #$04                ; Toggle the lowest bit
-        sta PORTA               ; Change the display
+;        sta PORTA               ; Change the display
 
         ; Sleep for some time before responding
         mov #$00,T2MODH
