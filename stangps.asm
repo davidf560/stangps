@@ -40,8 +40,8 @@ LED_RX                  EQU $01
 LED_UNKNOWN_CMD         EQU $02
 LED_VALID_CMD           EQU $04
 LED_GYRO_INT            EQU $08
-LED_UNUSED1             EQU $10
-LED_GETB_TIMEOUT        EQU $20
+LED_GETB_TIMEOUT        EQU $10
+LED_PROG_RECVD          EQU $20
 LED_XYT_RECVD           EQU $40
 LED_WARM_RESET          EQU $80
 
@@ -90,6 +90,8 @@ REQ_SET_WAYPT           EQU 130t
 REQ_GET_WAYPT           EQU 140t
 REQ_Y_ONLY              EQU 170t
 REQ_XYTHETA             EQU 180t
+REQ_SET_PROG            EQU 190t
+REQ_GET_PROG            EQU 200t
 REQ_THETA_ONLY          EQU 240t
 REQ_INVALID             EQU 255t
 
@@ -158,6 +160,8 @@ RCCurrentWaypt:
 DataRequest:
         ds $01
 PosInitialized:
+        ds $01
+RCCurrentProg:
         ds $01
 
 **************************************************************
@@ -369,6 +373,7 @@ InitRAM:
         mov #0,PotValue
         mov #0,RCCurrentWaypt
         mov #0,PosInitialized
+        mov #7t,RCCurrentProg
         mov #REQ_INVALID,DataRequest
         lda PHOTO_SENSOR_PORT
         and #$03
@@ -884,6 +889,18 @@ SendBCheckSetWP:
 
 SendBCheckGetWP:
         cmp #REQ_GET_WAYPT      ; Check if byte to send is Y Only cmd
+        bne SendBCheckGetProg
+        inca
+        bra SendByteNow
+
+SendBCheckGetProg:
+        cmp #REQ_GET_PROG       ; Check if byte to send is Y Only cmd
+        bne SendBCheckSetProg
+        inca
+        bra SendByteNow
+
+SendBCheckSetProg:
+        cmp #REQ_SET_PROG       ; Check if byte to send is Y Only cmd
         bne SendBCheckSetXYT
         inca
         bra SendByteNow
@@ -1004,6 +1021,25 @@ SetPositionRequest:
         sta LED_PORT
         bra RCRequestDone
 
+SetProgramRequest:
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        bcs RCRequestDone       ; GetByte timed out, so don't store waypoint
+        sta RCCurrentProg       ; Store current program
+        lda LED_PORT            ; Signal by an LED that we've received prog #
+        eor #LED_PROG_RECVD
+        sta LED_PORT
+        bra RCRequestDone
+
+GetProgramRequest:
+        ; Sleep for some time before responding
+        mov #$16,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
+        lda RCCurrentProg       ; Load currently stored program #
+        jsr SendByte            ; Send it out
+        bra RCRequestDone
+
 RCRequestIsr:
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
@@ -1013,6 +1049,8 @@ RCRequestIsr:
         mov #$13,T2MODL         ; Set up for 0.5 millisecond timeout
         cmp #REQ_SET_WAYPT      ; Check for request to set waypoint
         beq SetWayptRequest     ; Handle it if equal
+        cmp #REQ_SET_PROG       ; Check for request to set program #
+        beq SetProgramRequest   ; Handle it if equal
         cmp #REQ_X_ONLY         ; Check for X request
         beq XRequest            ; Handle it if equal
         cmp #REQ_Y_ONLY         ; Check for Y request
@@ -1021,8 +1059,10 @@ RCRequestIsr:
         beq ThetaRequest        ; Handle it if equal
         cmp #REQ_GET_WAYPT      ; Check for request to get waypoint
         beq GetWayptRequest     ; Handle it if equal
+        cmp #REQ_GET_PROG       ; Check for request to get program #
+        beq GetProgramRequest   ; Handle it if equal
         ; Check for extended commands
-        brset 0,PosInitialized,NoExtendedCmds
+;        brset 0,PosInitialized,NoExtendedCmds
         cmp #REQ_SET_XYT        ; Check for cmd to set current position
         beq SetPositionRequest  ; Handle it if equal
 NoExtendedCmds:
