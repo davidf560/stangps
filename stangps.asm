@@ -414,6 +414,7 @@ InitGyroTimer:
 **************************************************************
 Main:
         ; Kick watchdog
+        clra
         sta COPCTL              ; Kick watchdog
 
         ; Initialize registers
@@ -992,7 +993,7 @@ SetWaypoint:
 
 DebugRequest:
         ;stop                    ; Should cause illegal opcode reset
-        jmp DataRequestDone        
+        jmp DataRequestDone
 
 AllRequest:
         lda AbsoluteX
