@@ -232,8 +232,10 @@ FindGyroCenter:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
         add {GyroCenter+1}      ; Add to our running total (LSB)
+        sta {GyroCenter+1}      ; Store to LSB
         clra
         adc GyroCenter          ; Add to our running total (MSB)
+        sta GyroCenter          ; Store to MSB
         incx
         cpx #$00                ; See if we've taken 256 samples yet
         bne FindGyroCenter      ; Take another sample
