@@ -35,7 +35,7 @@ VectorStart             EQU $FFDC
 ; Display (LED Bargraph) Constants
 LED_PORT                EQU PORTA
 LED_RX                  EQU $01
-LED_UNKONWN_CMD         EQU $02
+LED_UNKNOWN_CMD         EQU $02
 LED_VALID_CMD           EQU $04
 LED_GYRO_INT            EQU $08
 LED_UNUSED1             EQU $10
@@ -367,6 +367,7 @@ InitRAM:
 InitGyro:
         mov #$FF,LED_PORT       ; Light up all LEDs to signal sampling of gyro
         clrx                    ; Clear the index register
+InitGyroLoop:
         lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
         ora #ADC_ENABLE         ; Set the enable bit
         sta ADSCR               ; Start an ADC conversion on the gyro chanel
@@ -379,7 +380,7 @@ InitGyro:
         sta GyroCenter          ; Store to MSB
         incx
         cpx #$00                ; See if we've taken 256 samples yet
-        bne FindGyroCenter      ; Take another sample
+        bne InitGyroLoop        ; Take another sample
         ; Done sampling, now average
         brclr 7,GyroCenter,NoRound
         inc GyroCenter          ; Round up because MSB of lower byte was set
