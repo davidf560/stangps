@@ -17,6 +17,7 @@
 * 02/03/03 David Flowerday      Adding support for gyroscope
 * 02/04/03 David Flowerday      Adding support for potentiometer
 * 02/04/03 David Flowerday      Adding support for handling RC requests
+* 02/05/03 David Flowerday      Average gyro readings to find gyro center
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -94,6 +95,8 @@ GyroValNeg:
         ds $01
 TempGyroVal:
         ds $01
+GyroCenter:
+        ds $02
 
 **************************************************************
 **************************************************************
@@ -206,6 +209,41 @@ InitGyroTimer:
         rts
 
 **************************************************************
+* InitGyro - Determines gyro center and allows gyro to
+*            settle down before continuing
+**************************************************************
+InitGyro:
+        mov #$80,PORTA          ; Light up MSB of LED bargraph
+        clrx                    ; Clear the index register
+        mov #$4B,T2MODH
+        mov #$00,T2MODL         ; Set up for .5 second interrupts
+RestartInitTimer:
+        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
+        brclr 7,T2SC,$          ; Busy loop until timer expires
+        lda PORTA               ; Read our LED status
+        cmp #$FF                ; Check to see if they're all lit
+        beq FindGyroCenter
+        asr PORTA               ; Shift down one more bit
+        bra RestartInitTimer
+FindGyroCenter:
+        lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
+        ora #ADC_ENABLE         ; Set the enable bit
+        sta ADSCR               ; Start an ADC conversion on the gyro chanel
+        brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
+        lda ADR                 ; Read ADC value
+        add {GyroCenter+1}      ; Add to our running total (LSB)
+        clra
+        adc GyroCenter          ; Add to our running total (MSB)
+        incx
+        cpx #$00                ; See if we've taken 256 samples yet
+        bne FindGyroCenter      ; Take another sample
+        ; Done sampling, now average
+        brclr 7,GyroCenter,NoRound
+        inc GyroCenter          ; Round up because MSB of lower byte was set
+NoRound:
+        rts
+
+**************************************************************
 * InitSCI - Turns on the asyncronous communications port
 *           for TX, RX at specified baud N81
 **************************************************************
@@ -262,6 +300,8 @@ InitRAMDone:
 *             pullup enable registers
 **************************************************************
 InitPorts:
+        mov #$FF,DDRA           ; Port A is all outputs (LEDs)
+        mov #$00,PORTA          ; Initialize all LEDs to off
         mov #$00,DDRD           ; Port D is all inputs
         mov #$03,PTDPUE         ; Enable pullup on D0 and D1
         rts
@@ -427,6 +467,7 @@ Main:
         jsr InitSCI             ; Initialize the serial comm. interface
         jsr InitRAM             ; Initialize RAM variables
         jsr InitADC             ; Initialize the analog to digital converter
+        jsr InitGyro            ; Find the gyro center position
         jsr InitGyroTimer       ; Initialize the gyroscope timer
         cli                     ; Enable interrupts
 
@@ -679,7 +720,7 @@ GyroIsr:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read gyro value
         sta TempGyroVal
-        sub #126t               ; Convert so it's centered around 0
+        sub GyroCenter          ; Convert so it's centered around 0
         cmp #1t
         bgt GyroPositive        ; Turning in a positive direction
         cmp #-1t
@@ -754,7 +795,6 @@ RCRequestIsr:
         jsr SendByte            ; Send it out
 RCRequestDone:
         rti
-
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
