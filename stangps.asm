@@ -42,7 +42,7 @@ LED_VALID_CMD           EQU $04
 LED_GYRO_INT            EQU $08
 LED_UNUSED1             EQU $10
 LED_UNUSED2             EQU $20
-LED_SCI_ERROR           EQU $40
+LED_XYT_RECVD           EQU $40
 LED_WARM_RESET          EQU $80
 
 ; Photo Sensor Constants
@@ -78,21 +78,19 @@ BRADS_PER_TICK_L        EQU 30t
 ;GYRO_NDEGS_LOW          EQU $48
 ; This set is for 75 degs/sec gyro (needs different factor
 ; for positive versus negative for some reason)
-GYRO_PDEGS_HIGH         EQU $23
-GYRO_PDEGS_LOW          EQU $AC
-GYRO_NDEGS_HIGH         EQU $23
-GYRO_NDEGS_LOW          EQU $1F
+GYRO_PDEGS_HIGH         EQU $22
+GYRO_PDEGS_LOW          EQU $50
+GYRO_NDEGS_HIGH         EQU $20
+GYRO_NDEGS_LOW          EQU $F9
 
 ; Serial Communications Constants
+REQ_X_ONLY              EQU 85t
+REQ_SET_XYT             EQU 120t
+REQ_SET_WAYPT           EQU 130t
+REQ_GET_WAYPT           EQU 140t
+REQ_Y_ONLY              EQU 170t
 REQ_XYTHETA             EQU 180t
 REQ_THETA_ONLY          EQU 240t
-REQ_GET_WAYPT           EQU 182t
-REQ_SET_WAYPT           EQU 183t
-REQ_EVERYTHING          EQU 184t
-REQ_RESETREASON         EQU 185t
-REQ_DEBUG               EQU 186t
-REQ_X_ONLY              EQU 85t
-REQ_Y_ONLY              EQU 170t
 REQ_INVALID             EQU 255t
 
 **************************************************************
@@ -158,6 +156,8 @@ ResetStatus:
 RCCurrentWaypt:
         ds $01
 DataRequest:
+        ds $01
+PosInitialized:
         ds $01
 
 **************************************************************
@@ -368,6 +368,7 @@ InitRAM:
         mov #0,{GyroCenter+1}
         mov #0,PotValue
         mov #0,RCCurrentWaypt
+        mov #0,PosInitialized
         mov #REQ_INVALID,DataRequest
         lda PHOTO_SENSOR_PORT
         and #$03
@@ -400,7 +401,7 @@ InitGyroLoop:
         cpx #$00                ; See if we've taken 256 samples yet
         bne InitGyroLoop        ; Take another sample
         ; Done sampling, now average
-        brclr 7,GyroCenter,NoRound
+        brclr 7,{GyroCenter+1},NoRound
         inc GyroCenter          ; Round up because MSB of lower byte was set
 NoRound:
         clr LED_PORT            ; Turn off the LEDs to indicate center found
@@ -824,6 +825,22 @@ GetByte:
         lda SCDR                ; Read character
         rts
 
+GetByteWithTimeout:
+        mov #$00,T2MODH
+        mov #$4D,T2MODL         ; Set up for 2 millisecond timeout
+        mov #$16,T2SC           ; Timer 1 Started
+GetByteTimeoutLoop:
+        brset 5,SCS1,GotByte    ; Check for received waypoint byte
+        brclr 7,T2SC,GetByteTimeoutLoop
+        ; At this point we did not receive the byte in time
+        mov #$36,T2SC           ; Reset Timer 1
+        lda #0                  ; No byte received so default to 0 (?)
+        rts
+GotByte:
+        mov #$36,T2SC           ; Reset Timer 1
+        lda SCDR
+        rts
+
 **************************************************************
 * SendByte - Send the byte in Accum out the serial port
 **************************************************************
@@ -944,29 +961,70 @@ GyroDone:
 *                positioning update
 **************************************************************
 RCRequestIsr:
-        mov #$00,T2MODH
-        mov #$13,T2MODL         ; Set up for ?? second timeout
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
         sta LED_PORT            ; Change the display
         jsr GetByte             ; Read the byte that was sent to us
+        mov #$00,T2MODH
+        mov #$13,T2MODL         ; Set up for 0.5 millisecond timeout
+        cmp #REQ_SET_WAYPT      ; Check for request to set waypoint
+        beq SetWayptRequest     ; Handle it if equal
         cmp #REQ_X_ONLY         ; Check for X request
         beq XRequest            ; Handle it if equal
         cmp #REQ_Y_ONLY         ; Check for Y request
         beq YRequest            ; Handle it if equal
         cmp #REQ_THETA_ONLY     ; Check for Theta request
         beq ThetaRequest        ; Handle it if equal
+        cmp #REQ_GET_WAYPT      ; Check for request to get waypoint
+        beq GetWayptRequest     ; Handle it if equal
+        ; Check for extended commands
+        brset 0,PosInitialized,NoExtendedCmds
+        cmp #REQ_SET_XYT        ; Check for cmd to set current position
+        beq SetPositionRequest  ; Handle it if equal
+NoExtendedCmds:
         lda LED_PORT            ; Toggle the UNKNOWN_CMD LED
         eor #LED_UNKNOWN_CMD
         sta LED_PORT
         bra RCRequestDone
 
-XRequest:
+SetPositionRequest:
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        sta {AbsoluteX+1}
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for another byte
+        sta {AbsoluteY+1}
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for last byte
+        sta RobotTheta
+        mov #$FF,PosInitialized ; Indicate that our position has been initialized
+        lda LED_PORT            ; Signal by an LED that we're linked up
+        eor #LED_XYT_RECVD
+        sta LED_PORT
+        bra RCRequestDone
+
+SetWayptRequest:
+        jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        sta RCCurrentWaypt      ; Store current waypoint
+        bra RCRequestDone        
+        
+GetWayptRequest:
         ; Sleep for some time before responding
-        mov #$06,T2SC           ; Timer 1 Started
+        mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
 
+        lda RCCurrentWaypt      ; Load currently stored waypoint number
+        jsr SendByte            ; Send it out
+        bra RCRequestDone
+
+XRequest:
+        ; Sleep for some time before responding
+        mov #$16,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
+        ; Check if our position has been initialized and if not
+        ; send back 0
+        brclr 0,PosInitialized,SendZero
+        
         ; RC has requested that we send position data, so we'll
         ; do just that
         lda {AbsoluteX+1}       ; Load LSB of integer portion of X
@@ -977,10 +1035,14 @@ NoIncX:
         bra RCRequestDone
 
 YRequest:
-        mov #$06,T2SC           ; Timer 1 Started
+        mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
 
+        ; Check if our position has been initialized and if not
+        ; send back 0
+        brclr 0,PosInitialized,SendZero
+        
         lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
         brclr 7,{AbsoluteY+2},NoIncY
         inca
@@ -989,10 +1051,14 @@ NoIncY:
         bra RCRequestDone
 
 ThetaRequest:
-        mov #$06,T2SC           ; Timer 1 Started
+        mov #$16,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
         mov #$36,T2SC           ; Reset Timer 1
 
+        ; Check if our position has been initialized and if not
+        ; send back 0
+        brclr 0,PosInitialized,SendZero
+        
         lda RobotTheta          ; Load LSB of integer portion of Theta
         brclr 7,{RobotTheta+1},NoIncTheta
         inca
@@ -1002,6 +1068,11 @@ RCRequestDone:
         lda SCS1                ; Flush receive buffer
         lda SCDR
         rti
+
+SendZero:
+        lda #0t
+        jsr SendByte
+        bra RCRequestDone
 
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
