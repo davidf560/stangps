@@ -24,6 +24,7 @@
 * 02/24/03 David Flowerday      Added additional datasets which can be
 *                               requested using different command bytes
 * 02/27/03 David Flowerday      Enabled COP watchdog
+* 03/12/03 David Flowerday      Reverted to Comp_2003-02-19_Shipped Serial ISR
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
@@ -41,7 +42,7 @@ LED_VALID_CMD           EQU $04
 LED_GYRO_INT            EQU $08
 LED_UNUSED1             EQU $10
 LED_UNUSED2             EQU $20
-LED_UNUSED3             EQU $40
+LED_SCI_ERROR           EQU $40
 LED_WARM_RESET          EQU $80
 
 ; Photo Sensor Constants
@@ -51,7 +52,7 @@ DISTANCE_RES_HIGH       EQU $4B
 DISTANCE_RES_LOW        EQU $C0
 
 ; Analog to Digital Converter Constants
-ADC_POT_CHAN            EQU $2
+ADC_POT_CHAN            EQU $1
 ADC_GYRO_CHAN           EQU $0
 ADC_ENABLE              EQU $00
 
@@ -84,14 +85,14 @@ GYRO_NDEGS_LOW          EQU $1F
 
 ; Serial Communications Constants
 REQ_XYTHETA             EQU 180t
-REQ_THETA_ONLY          EQU 181t
+REQ_THETA_ONLY          EQU 240t
 REQ_GET_WAYPT           EQU 182t
 REQ_SET_WAYPT           EQU 183t
 REQ_EVERYTHING          EQU 184t
 REQ_RESETREASON         EQU 185t
 REQ_DEBUG               EQU 186t
-REQ_X_ONLY              EQU 187t
-REQ_Y_ONLY              EQU 188t
+REQ_X_ONLY              EQU 85t
+REQ_Y_ONLY              EQU 170t
 REQ_INVALID             EQU 255t
 
 **************************************************************
@@ -426,7 +427,7 @@ Main:
         sta COPCTL              ; Kick watchdog
 
         ; Initialize registers
-        mov #$09,CONFIG1        ; Disable COP, enable LVI reset,
+        mov #$29,CONFIG1        ; Disable COP, disable LVI reset,
                                 ; enable 5 volt LVI thresholds
         mov #$00,CONFIG2
         rsp                     ; Reset stack pointer
@@ -454,8 +455,6 @@ WarmReset:
 MainLoop:
         sta COPCTL              ; Kick watchdog
 
-        jsr DataRequestHandler  ; Handle the data request if present
-
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
         jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
@@ -467,6 +466,7 @@ MainLoop:
 
         jsr ComputeDeltas       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
+
         jsr UpdatePosition      ; Updates our field position using
                                 ; 'Delta X' and 'Delta Y'
 
@@ -507,6 +507,7 @@ ReadPot:
         clrh
         stx PotValue            ; Store in RAM
         lda PotTable,X          ; Get PotToBrads(ADR)
+        eor #$FF                ; Complement to fix stupid backwards lookup table
         sta PotBrads            ; Store in RAM
         rts
 
@@ -690,163 +691,6 @@ UpdateDone:
         pula
         rts
 
-SleepRCDelay:
-        mov #$00,T2MODH
-        mov #$09,T2MODL         ; Set up for .5 ms timeout
-        mov #$06,T2SC           ; Timer 1 Started
-SleepRCDelayLoop:
-        sta COPCTL              ; Kick watchdog
-        brclr 7,T2SC,SleepRCDelayLoop
-        mov #$36,T2SC           ; Reset Timer 1
-        rts
-
-**************************************************************
-* DataRequestHandler - Handles a request for data.  Called by
-*                      MainLoop.
-*                      Args: None
-*                      Returns: Nothing
-**************************************************************
-DataRequestHandler:
-        sei                     ; Disable interrupts
-        lda DataRequest         ; Check for a data request
-        mov #REQ_INVALID,DataRequest
-        cli                     ; Enable interrupts
-        cmp #REQ_INVALID        ; Compare to invalid request
-        bne RequestValid        ; No request present if A == REQ_INVALID
-        rts
-RequestValid:
-        ; The next three lines push the address of DataRequestDone to
-        ; the stack so that we can execute an "rts" command from the various
-        ; *Request subroutines since we can't do a conditional branch to
-        ; subroutine in the "switch" section below
-        ldhx #DataRequestDone   ; Load address of DataRequestDone
-        pshx                    ; Push low byte of DataRequestDone address
-        pshh                    ; Push high byte of DataRequestDone address
-        ; This is a switch statement to determine what values to
-        ; send back to the data requestor
-        cmp #REQ_X_ONLY         ; Request to get X value
-        beq XRequest
-        cmp #REQ_Y_ONLY         ; Request to get Y value
-        beq YRequest
-        cmp #REQ_THETA_ONLY     ; Request to get Theta value
-        beq ThetaRequest
-        cmp #REQ_XYTHETA        ; Request to get X, Y, and Theta all at once
-        beq XYThetaRequest
-        cmp #REQ_GET_WAYPT      ; Request to get current waypoint
-        beq GetWayptRequest
-        cmp #REQ_SET_WAYPT      ; Request to set current waypoint
-        beq SetWayptRequest
-        cmp #REQ_EVERYTHING     ; Request to get everything we know
-        beq AllRequest
-        cmp #REQ_RESETREASON    ; Request to get value of Reset Status Register
-        beq RSRRequest
-        cmp #REQ_DEBUG          ; Request to get debug stuff
-        beq DebugRequest
-        ; If we've reached this point, then the received byte
-        ; did not match any of our command bytes - toggle an LED
-        ; to indicate that
-        lda LED_PORT            ; Read the LED states
-        eor #LED_UNKNOWN_CMD    ; Toggle the "Unknown Command" LED
-        sta LED_PORT            ; Change the LED display
-DataRequestDone:
-        ; The next two lines flush the receive buffer in case the
-        ; device we're connected to provides an echo (like the RC)
-        lda SCS1                ; Read SCI Status Register 1
-        lda SCDR                ; Read serial data register
-        rts
-
-Round:
-        ; Takes in integer in A and fraction in X - rounds A as appropriate
-        aslx                    ; Shift X left 1 bit (to set carry bit)
-        adc #0                  ; Add carry bit to A
-        rts
-
-XYThetaRequest:
-        bsr XRequest            ; Load and send out X value
-        bsr YRequest            ; Load and send out Y value
-        bsr ThetaRequest        ; Load and send out Theta value
-        rts
-
-XRequest:
-        jsr SleepRCDelay        ; Sleep to let RC catch up
-        lda {AbsoluteX+1}       ; Load LSB of integer portion of X
-        ldx {AbsoluteX+2}       ; Load MSB of fraction portion of X
-        bsr Round               ; Round value in A if necessary
-        jsr SendByte            ; Send out rounded value of X
-        rts
-
-YRequest:
-        jsr SleepRCDelay        ; Sleep to let RC catch up
-        lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
-        ldx {AbsoluteY+2}       ; Load MSB of fraction portion of Y
-        bsr Round               ; Round value in A if necessary
-        jsr SendByte            ; Send out rounded value of Y
-        rts
-
-ThetaRequest:
-        jsr SleepRCDelay        ; Sleep to let RC catch up
-        lda RobotTheta          ; Load LSB of integer portion of Theta
-        ldx {RobotTheta+1}      ; Load MSB of fraction portion of Theta
-        bsr Round               ; Round value in A if necessary
-        jsr SendByte            ; Send out rounded value of Theta
-        rts
-
-GetWayptRequest:
-        ; Sleep for some time before continuing so RC doesn't get swamped
-        jsr SleepRCDelay        ; Sleep to let RC catch up
-        lda RCCurrentWaypt      ; Load RC's current waypoint
-        jsr SendByte            ; Send it out
-        rts
-
-SetWayptRequest:
-        jsr GetByte             ; Read in waypoint # from RC
-        sta RCCurrentWaypt      ; Store it in our RAM
-        rts
-
-DebugRequest:
-        ;stop                    ; Should cause illegal opcode reset
-        rts
-
-RSRRequest:
-        lda ResetStatus
-        jsr SendByte
-        rts
-
-AllRequest:
-        lda AbsoluteX
-        jsr SendByte
-        lda {AbsoluteX+1}
-        jsr SendByte
-        lda {AbsoluteX+2}
-        jsr SendByte
-        lda {AbsoluteX+3}
-        jsr SendByte
-        lda AbsoluteY
-        jsr SendByte
-        lda {AbsoluteY+1}
-        jsr SendByte
-        lda {AbsoluteY+2}
-        jsr SendByte
-        lda {AbsoluteY+3}
-        jsr SendByte
-        lda RobotTheta
-        jsr SendByte
-        lda {RobotTheta+1}
-        jsr SendByte
-        lda {RobotTheta+2}
-        jsr SendByte
-        lda {RobotTheta+3}
-        jsr SendByte
-        lda GyroValue
-        jsr SendByte
-        lda PotBrads
-        jsr SendByte
-        lda PotValue
-        jsr SendByte
-        lda ResetStatus
-        jsr SendByte
-        rts
-
 
 **************************************************************
 **************************************************************
@@ -985,6 +829,27 @@ GetByte:
 * SendByte - Send the byte in Accum out the serial port
 **************************************************************
 SendByte:
+        ; First check to see if byte to send is equal to
+        ; one of the command bytes.  If so, increment it
+        ; by one to prevent seeing our own echo and getting
+        ; into trouble (stupid robot controller...)
+        cmp #REQ_THETA_ONLY     ; Check if byte to send is Theta Only cmd
+        bne SendByteCheckX
+        inca
+        bra SendByteNow
+
+SendByteCheckX:
+        cmp #REQ_X_ONLY         ; Check if byte to send is X Only cmd
+        bne SendByteCheckY
+        inca
+        bra SendByteNow
+        
+SendByteCheckY:
+        cmp #REQ_Y_ONLY         ; Check if byte to send is Y Only cmd
+        bne SendByteNow
+        inca
+
+SendByteNow:
         sta COPCTL              ; Kick watchdog
         brclr 7,SCS1,SendByte   ; Wait until xmitter is ready.
         sta SCDR                ; Xmit it our serial port
@@ -1076,16 +941,67 @@ GyroDone:
         rti
 
 **************************************************************
-* DataRequestIsr - used when the Robot Controller requests a
-*                  positioning update
+* RCRequestIsr - used when the Robot Controller requests a
+*                positioning update
 **************************************************************
-DataRequestIsr:
+RCRequestIsr:
+        mov #$00,T2MODH
+        mov #$13,T2MODL         ; Set up for ?? second timeout
         lda LED_PORT            ; Read the LED states
         eor #LED_RX             ; Toggle the lowest bit
         sta LED_PORT            ; Change the display
-        lda SCS1
-        lda SCDR                ; Read character
-        sta DataRequest         ; Store into global var to signal request
+        jsr GetByte             ; Read the byte that was sent to us
+        cmp #REQ_X_ONLY         ; Check for X request
+        beq XRequest            ; Handle it if equal
+        cmp #REQ_Y_ONLY         ; Check for Y request
+        beq YRequest            ; Handle it if equal
+        cmp #REQ_THETA_ONLY     ; Check for Theta request
+        beq ThetaRequest        ; Handle it if equal
+        lda LED_PORT            ; Toggle the UNKNOWN_CMD LED
+        eor #LED_UNKNOWN_CMD
+        sta LED_PORT
+        bra RCRequestDone
+
+XRequest:
+        ; Sleep for some time before responding
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
+        ; RC has requested that we send position data, so we'll
+        ; do just that
+        lda {AbsoluteX+1}       ; Load LSB of integer portion of X
+        brclr 7,{AbsoluteX+2},NoIncX
+        inca
+NoIncX:
+        jsr SendByte            ; Send it out
+        bra RCRequestDone
+
+YRequest:
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
+        lda {AbsoluteY+1}       ; Load LSB of integer portion of Y
+        brclr 7,{AbsoluteY+2},NoIncY
+        inca
+NoIncY:
+        jsr SendByte            ; Send it out
+        bra RCRequestDone
+
+ThetaRequest:
+        mov #$06,T2SC           ; Timer 1 Started
+        brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
+        mov #$36,T2SC           ; Reset Timer 1
+
+        lda RobotTheta          ; Load LSB of integer portion of Theta
+        brclr 7,{RobotTheta+1},NoIncTheta
+        inca
+NoIncTheta:
+        jsr SendByte            ; Send it out
+RCRequestDone:
+        lda SCS1                ; Flush receive buffer
+        lda SCDR
         rti
 
 **************************************************************
@@ -1107,7 +1023,7 @@ DummyIsr:
         dw DummyIsr             ; ADC Conversion Complete
         dw DummyIsr             ; Keyboard Vector
         dw DummyIsr             ; SCI Transmit Vector
-        dw DataRequestIsr       ; SCI Receive Vector
+        dw RCRequestIsr         ; SCI Receive Vector
         dw DummyIsr             ; SCI Error Vector
         dw DummyIsr             ; SPI Transmit Vector
         dw DummyIsr             ; SPI Receive Vector
