@@ -173,11 +173,11 @@ InitRAM:
         mov #0,LastPhotoVals
         mov #0,RobotAngle
         mov #0,AbsoluteX
-        mov #0,{AbsoluteX+1}
+        mov #1,{AbsoluteX+1}
         mov #0,{AbsoluteX+2}
         mov #0,{AbsoluteX+3}
         mov #0,AbsoluteY
-        mov #0,{AbsoluteY+1}
+        mov #1,{AbsoluteY+1}
         mov #0,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
         mov #0,DeltaX
@@ -187,6 +187,7 @@ InitRAM:
 InitRAMDone:
         rts
 
+**************************************************************
 **************************************************************
 * Helper Functions
 **************************************************************
