@@ -22,7 +22,9 @@ RAMStart EQU $0040
 FLASHStart EQU $8000
 VectorStart EQU $FFDC
 
-DISTANCE_RES_LOW EQU $0
+;DISTANCE_RES_LOW EQU 75t
+;DISTANCE_RES_HIGH EQU $0
+DISTANCE_RES_LOW EQU 0t
 DISTANCE_RES_HIGH EQU $1
 PHOTO_SENSOR_PORT EQU PORTD
 ADC_POT_CHAN EQU $1
@@ -55,6 +57,8 @@ DistanceNeg:
 RobotAngle:
         ds $01
 LastPhotoVals:
+        ds $01
+NumQuadErrors:
         ds $01
 TempWord1:
         ds $02
@@ -143,7 +147,10 @@ QDecrement:
 * QError - Illegal light sensor state change
 **************************************************************
 QError:
-        ; ???
+        inc NumQuadErrors       ; Increment our error count
+        mov #0,Distance
+        mov #0,{Distance+1}
+        mov #0,DistanceNeg
         rts                     ; Return to main loop
 
 
@@ -159,7 +166,8 @@ QError:
 **************************************************************
 InitSCI:
         lda SCS1
-        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
+;        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
+        mov #$02,SCBR           ; Baud Rate = 38400 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
         mov #$08,SCC2           ; Enable the SCI for TX only
         mov #$00,SCC3           ; No SCC error interrupts, please
@@ -174,7 +182,6 @@ InitRAM:
         lda SRSR                ; Read Reset Status Register
         and #%11000110          ; Check for a reason that would invalidate RAM
         beq InitRAMDone         ; RAM should still be good, don't initialize
-        mov #0,LastPhotoVals
         mov #0,RobotAngle
         mov #0,AbsoluteX
         mov #1,{AbsoluteX+1}
@@ -191,6 +198,12 @@ InitRAM:
         mov #0,Distance
         mov #0,{Distance+1}
         mov #0,DistanceNeg
+        lda PHOTO_SENSOR_PORT
+        and #$03
+        asla
+        asla
+        sta LastPhotoVals
+        mov #0,NumQuadErrors
 InitRAMDone:
         rts
 
@@ -203,7 +216,7 @@ InitPorts:
         mov #$03,PTDPUE         ; Enable pullup on D0 and D1
         rts
 
-        
+
 **************************************************************
 **************************************************************
 * Helper Functions
@@ -305,26 +318,27 @@ Main:
         clrx                    ; Clear index register
 
         ; Initialize subsystems
+        jsr InitPorts           ; Initialize general purpose I/O ports
         jsr InitSCI             ; Initialize the Serial Comm. Interface
         jsr InitRAM             ; Initialize RAM variables
-        jsr InitPorts           ; Initialize general purpose I/O ports
         cli                     ; Enable interrupts
 
 MainLoop:
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
-        eor DistanceNeg         ; Correct the angle if we're going backwards
-        
+
         ;; DEBUG
-        lda #01t
-        
+        lda #43t
+
+        eor DistanceNeg         ; Correct the angle if we're going backwards
+
         jsr DetermineQuad       ; Determine what quadrant our vector is in
-        
+
         jsr ComputeDeltas       ; Find our 'Delta X' and 'Delta Y' using
                                 ; 'Dist Delta', 'Crab Angle' and 'Robot Angle'
         jsr UpdatePosition      ; Updates our field position using
                                 ; 'Delta X' and 'Delta Y'
-                                
+
         ;; Debug
         lda #$58                ; ASCII 'X'
         bsr SendByte
@@ -336,7 +350,7 @@ MainLoop:
         bsr SendByte
         lda AbsoluteX+3
         bsr SendByte
-        
+
         lda #$59                ; ASCII 'Y'
         bsr SendByte
         lda AbsoluteY
@@ -348,6 +362,16 @@ MainLoop:
         lda AbsoluteY+3
         bsr SendByte
         
+        lda #$45                ; ASCII 'E'
+        bsr SendByte
+        clra
+        bsr SendByte
+        bsr SendByte
+        lda NumQuadErrors
+        bsr SendByte
+        clra
+        bsr SendByte
+
         bra MainLoop            ; Do it all over again
 
 **************************************************************
@@ -388,12 +412,15 @@ ReadPot:
 ComputeDeltas:
         pshx                    ; Save off index register since we use it
         psha                    ; Save direction onto stack
-        
+
         ; Find Delta Y
+        ldx #2
+        mul                     ; Multiply A by 2
         tax                     ; Transfer direction to index register
-        lda SineTable,X         ; Look up sin(direction)
-        sta {TempWord1+1}       ; Store sin(dir) in TempWord1
-        clr TempWord1           ; Clear MSB of TempWord1
+        lda {SineTable+1},X     ; Look up sin(direction)
+        sta {TempWord1+1}       ; Store LSB of sin(dir) in TempWord1
+        lda SineTable,X         ; Load MSB of sine
+        sta TempWord1           ; Store MSB of sin(dir) in TempWord1
         lda {Distance+1}        ; Load LSB of Distance
         sta {TempWord2+1}       ; Store into TempWord2
         lda Distance            ; Load MSB of Distance
@@ -403,14 +430,17 @@ ComputeDeltas:
         sta DeltaY              ; Store into DeltaY
         lda {TempLWord+2}       ; Load fractional portion of Delta Y
         sta {DeltaY+1}          ; Store into DeltaY
-        
+
         ; Find Delta X
         pula                    ; Reload A with direction
         sub #64t                ; A = A - 90 degrees
+        ldx #2
+        mul                     ; Multiply A by 2
         tax                     ; Transfer direction to index register
-        lda SineTable,X         ; Look up sin(90 - direction) (== cos(dir))
-        sta {TempWord1+1}       ; Store cos(dir) in TempWord1
-        clr TempWord1           ; Clear MSB of TempWord1
+        lda {SineTable+1},X     ; Look up sin(direction) (== cos(dir))
+        sta {TempWord1+1}       ; Store LSB of sin(dir) in TempWord1
+        lda SineTable,X         ; Load MSB of sine
+        sta TempWord1           ; Store MSB of sin(dir) in TempWord1
         lda {Distance+1}        ; Load LSB of Distance
         sta {TempWord2+1}       ; Store into TempWord2
         lda Distance            ; Load MSB of Distance
@@ -452,7 +482,7 @@ CheckQuad4:
         mov #$FF,DeltaYNeg      ; Y is negative
 DetermineQuadDone:
         rts
-        
+
 **************************************************************
 * UpdatePosition - Updates 'Absolute X' and 'Absolute Y' with
 *                  values from 'Delta X' and 'Delta Y'
@@ -465,7 +495,7 @@ UpdatePosition:
         ; Update X coordinate first
         lda DeltaXNeg           ; Check to see if DeltaX is negative
         bne DeltaXIsNeg
-        
+
         ; Delta X is positive
         lda {DeltaX+1}          ; Load LSB of DeltaX
         add {AbsoluteX+3}       ; Add LSB of AbsoluteX
@@ -480,7 +510,7 @@ UpdatePosition:
         adc AbsoluteX           ; Add carry from 3rd byte to MSB
         sta AbsoluteX           ; Store result
         bra DoDeltaY            ; Go do the Y component now
-        
+
 DeltaXIsNeg:
         ; Delta X is negative
         lda {AbsoluteX+3}       ; Load LSB of AbsoluteX
@@ -500,7 +530,7 @@ DoDeltaY:
         ; Now update Y coordinate
         lda DeltaYNeg           ; Check to see if DeltaY is negative
         bne DeltaYIsNeg
-        
+
         ; Delta Y is positive
         lda {DeltaY+1}          ; Load LSB of DeltaY
         add {AbsoluteY+3}       ; Add LSB of AbsoluteY
