@@ -862,6 +862,24 @@ SendByteCheckX:
 
 SendByteCheckY:
         cmp #REQ_Y_ONLY         ; Check if byte to send is Y Only cmd
+        bne SendBCheckSetWP
+        inca
+        bra SendByteNow
+
+SendBCheckSetWP:
+        cmp #REQ_SET_WAYPT      ; Check if byte to send is Y Only cmd
+        bne SendBCheckGetWP
+        inca
+        bra SendByteNow
+
+SendBCheckGetWP:
+        cmp #REQ_GET_WAYPT      ; Check if byte to send is Y Only cmd
+        bne SendBCheckSetXYT
+        inca
+        bra SendByteNow
+
+SendBCheckSetXYT:
+        cmp #REQ_SET_XYT        ; Check if byte to send is Y Only cmd
         bne SendByteNow
         inca
 
