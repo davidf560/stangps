@@ -825,6 +825,12 @@ GetByte:
         lda SCDR                ; Read character
         rts
 
+**************************************************************
+* GetByteWithTimeout - Get byte and return it in accumulator
+*                      Wait only for 2 milliseconds before
+*                      giving up.  If we timeout, set the
+*                      carry bit to indicate error.
+**************************************************************
 GetByteWithTimeout:
         mov #$00,T2MODH
         mov #$4D,T2MODL         ; Set up for 2 millisecond timeout
@@ -833,12 +839,12 @@ GetByteTimeoutLoop:
         brset 5,SCS1,GotByte    ; Check for received waypoint byte
         brclr 7,T2SC,GetByteTimeoutLoop
         ; At this point we did not receive the byte in time
-        mov #$36,T2SC           ; Reset Timer 1
-        lda #0                  ; No byte received so default to 0 (?)
+        sec                     ; No byte received so set carry bit
         rts
 GotByte:
         mov #$36,T2SC           ; Reset Timer 1
         lda SCDR
+        clc                     ; Clear carry bit to indicate no timeout
         rts
 
 **************************************************************
@@ -885,7 +891,7 @@ SendBCheckSetXYT:
 
 SendByteNow:
         sta COPCTL              ; Kick watchdog
-        brclr 7,SCS1,SendByte   ; Wait until xmitter is ready.
+        brclr 7,SCS1,SendByteNow; Wait until xmitter is ready.
         sta SCDR                ; Xmit it our serial port
         rts
 
@@ -1007,12 +1013,15 @@ NoExtendedCmds:
 
 SetPositionRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
         sta {AbsoluteX+1}
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for another byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
         sta {AbsoluteY+1}
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for last byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
         sta RobotTheta
-        mov #$FF,PosInitialized ; Indicate that our position has been initialized
+        mov #$FF,PosInitialized ; Indicate that our position has been inited
         lda LED_PORT            ; Signal by an LED that we're linked up
         eor #LED_XYT_RECVD
         sta LED_PORT
@@ -1020,6 +1029,7 @@ SetPositionRequest:
 
 SetWayptRequest:
         jsr GetByteWithTimeout  ; Wait 2 milliseconds for a byte
+        bcs RCRequestDone       ; If carry bit set then GetByte timed out
         sta RCCurrentWaypt      ; Store current waypoint
         bra RCRequestDone
 
