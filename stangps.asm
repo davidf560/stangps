@@ -32,11 +32,22 @@ RAMStart                EQU $0040
 FLASHStart              EQU $8000
 VectorStart             EQU $FFDC
 
+; Display (LED Bargraph) Constants
+LED_PORT                EQU PORTA
+LED_RX                  EQU $01
+LED_UNKONWN_CMD         EQU $02
+LED_VALID_CMD           EQU $04
+LED_GYRO_INT            EQU $08
+LED_UNUSED1             EQU $10
+LED_UNUSED2             EQU $20
+LED_UNUSED3             EQU $40
+LED_WARM_RESET          EQU $80
+
 ; Photo Sensor Constants
 ; 0.2958984375 = RC tick per light sensor tick
+PHOTO_SENSOR_PORT       EQU PORTD
 DISTANCE_RES_HIGH       EQU $4B
 DISTANCE_RES_LOW        EQU $C0
-PHOTO_SENSOR_PORT       EQU PORTD
 
 ; Analog to Digital Converter Constants
 ADC_POT_CHAN            EQU $1
@@ -235,6 +246,33 @@ QError:
 **************************************************************
 
 **************************************************************
+* InitWait - Just wait for a period of time and display a
+*            countdown sequence on the LEDs
+*            (this is used to allow the gyro to stablize
+*            before we begin reading it)
+**************************************************************
+InitWait:
+        clrx                    ; Clear the index register
+        clr LED_PORT            ; Turn off all LEDs
+        mov #$4B,T2MODH
+        mov #$00,T2MODL         ; Set up for .5 second interrupts
+        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
+        brclr 7,T2SC,$          ; Busy loop until timer expires
+        mov #$80,LED_PORT       ; Light up MSB of LED bargraph
+ContinueWait:
+        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
+        brclr 7,T2SC,$          ; Busy loop until timer expires
+        lda LED_PORT            ; Read our LED status
+        cmp #$FF                ; Check to see if they're all lit
+        beq InitWaitDone
+        asr LED_PORT            ; Shift down one more bit
+        bra ContinueWait
+InitWaitDone:
+        clr LED_PORT            ; Turn off all LEDs
+        rts
+
+
+**************************************************************
 * InitADC - Initializes the Analog to Digital Converter
 **************************************************************
 InitADC:
@@ -255,21 +293,8 @@ InitGyroTimer:
 *            settle down before continuing
 **************************************************************
 InitGyro:
-;        mov #$80,PORTA          ; Light up MSB of LED bargraph
+        mov #$FF,LED_PORT       ; Light up all LEDs to signal sampling of gyro
         clrx                    ; Clear the index register
-        mov #$4B,T2MODH
-        mov #$00,T2MODL         ; Set up for .5 second interrupts
-        ;;debug
-        bra FindGyroCenter
-RestartInitTimer:
-        mov #$16,T2SC           ; Start timer 1 (prescalar == x / 64)
-        brclr 7,T2SC,$          ; Busy loop until timer expires
-        lda PORTA               ; Read our LED status
-        cmp #$FF                ; Check to see if they're all lit
-        beq FindGyroCenter
-;        asr PORTA               ; Shift down one more bit
-        bra RestartInitTimer
-FindGyroCenter:
         lda #ADC_GYRO_CHAN      ; Load the channel # that the gyro is on
         ora #ADC_ENABLE         ; Set the enable bit
         sta ADSCR               ; Start an ADC conversion on the gyro chanel
@@ -287,7 +312,7 @@ FindGyroCenter:
         brclr 7,GyroCenter,NoRound
         inc GyroCenter          ; Round up because MSB of lower byte was set
 NoRound:
-;        clr PORTA               ; Turn off the LEDs
+        clr LED_PORT            ; Turn off the LEDs to indicate center found
         rts
 
 **************************************************************
@@ -303,16 +328,30 @@ InitSCI:
         rts
 
 **************************************************************
+* CheckRSR - Checks the Reset Status Register and sets
+*            the Carry Bit if a warm reset is appropriate
+**************************************************************
+CheckRSR:
+        lda SRSR                ; Read Reset Status Register
+        sta ResetStatus         ; Store for later
+        and #%11000110          ; Check for a reason that would invalidate RAM
+        bne NoWarmReset         ; Branch if RAM is invalid
+        lda LED_PORT            ; Load state of LEDs
+        eor #LED_WARM_RESET     ; Set Warm Reset LED bit
+        sta LED_PORT            ; Write changes back to LED display
+        sec                     ; Set Carry bit to indicate warm reset possible
+        bra CheckRSRDone
+NoWarmReset:
+        clc                     ; Clear Carry bit to indicate no warm reset
+CheckRSRDone:
+        rts
+
+**************************************************************
 * InitRAM - Checks reset reason to determine if RAM is still
 *           valid from prior to reset.  If not, all RAM vars
 *           are initialized.
 **************************************************************
 InitRAM:
-        lda SRSR                ; Read Reset Status Register
-        sta ResetStatus
-        sta PORTA
-        and #%11000110          ; Check for a reason that would invalidate RAM
-        beq InitRAMDone         ; RAM should still be good, don't initialize
         mov #0,RobotAngle
         mov #0,AbsoluteX
         mov #127t,{AbsoluteX+1}
@@ -345,7 +384,6 @@ InitRAM:
         asla
         sta LastPhotoVals
         mov #0,NumQuadErrors
-InitRAMDone:
         rts
 
 **************************************************************
@@ -354,7 +392,7 @@ InitRAMDone:
 **************************************************************
 InitPorts:
         mov #$FF,DDRA           ; Port A is all outputs (LEDs)
-;        mov #$00,PORTA          ; Initialize all LEDs to off
+        mov #$00,LED_PORT       ; Initialize all LEDs to off
         mov #$00,DDRD           ; Port D is all inputs
         mov #$03,PTDPUE         ; Enable pullup on D0 and D1
         rts
@@ -519,9 +557,13 @@ Main:
         ; Initialize subsystems
         jsr InitPorts           ; Initialize general purpose I/O ports
         jsr InitSCI             ; Initialize the serial comm. interface
-        jsr InitRAM             ; Initialize RAM variables
         jsr InitADC             ; Initialize the analog to digital converter
+        jsr CheckRSR            ; Check the Reset Reason
+        bcs WarmReset
+        jsr InitWait            ; Delay for some time to allow gyro to settle
+        jsr InitRAM             ; Initialize RAM variables
         jsr InitGyro            ; Find the gyro center position
+WarmReset:
         jsr InitGyroTimer       ; Initialize the gyroscope timer
         cli                     ; Enable interrupts
 
@@ -779,9 +821,9 @@ UpdateDone:
 GyroIsr:
         inc GyroLoopCount       ; Increment our loop count
         bne GyroNoToggleLED     ; If != 0, don't toggle LED
-        lda PORTA               ; Load LED settings
-        eor #$01                ; Toggle LED 1
-        sta PORTA               ; Set the LEDs
+        lda LED_PORT            ; Load LED settings
+        eor #LED_GYRO_INT       ; Toggle LED 1
+        sta LED_PORT            ; Set the LEDs
 GyroNoToggleLED:
         lda T1SC                ; Load T1SC to clear TOF bit
         mov #$56,T1SC           ; Start timer 1 (prescalar == x / 64)
@@ -857,9 +899,9 @@ GyroDone:
 DataRequestIsr:
         mov #$00,T2MODH
         mov #$13,T2MODL         ; Set up for .5 ms timeout
-        lda PORTA               ; Read the LED states
-        eor #$01                ; Toggle the lowest bit
-        sta PORTA               ; Change the display
+        lda LED_PORT            ; Read the LED states
+        eor #LED_RX             ; Toggle the lowest bit
+        sta LED_PORT            ; Change the display
         jsr GetByte             ; Read the byte that was sent to us
         cmp #REQ_XYTHETA        ; Compare to X, Y, theta request
         beq XYThetaRequest      ; Request for X, Y, and Theta information
@@ -871,7 +913,17 @@ DataRequestIsr:
         beq SetWaypoint
         cmp #REQ_EVERYTHING     ; Send back everything we know
         beq AllRequest
+        ; If we've reached this point, then the received byte
+        ; did not match any of our command bytes - toggle an LED
+        ; to indicate that
+        lda LED_PORT            ; Read the LED states
+        eor #LED_UNKNOWN_CMD    ; Toggle the "Unknown Command" LED
+        sta LED_PORT            ; Change the LED display
 DataRequestDone:
+        ; Clear out the receive buffer to get rid of our own echo if
+        ; it's there
+        lda SCS1                ; Read SCI Status Register 1
+        lda SCDR                ; Read serial data register
         rti
 
 XYThetaRequest:
@@ -894,9 +946,9 @@ NoIncX:
 NoIncY:
         jsr SendByte            ; Send it out
 ThetaRequest:                   ; Label used if only theta is requested
-        lda PORTA               ; Read the LED states
-        eor #$04                ; Toggle the lowest bit
-        sta PORTA               ; Change the display
+        lda LED_PORT            ; Read the LED states
+        eor #LED_VALID_CMD      ; Toggle the lowest bit
+        sta LED_PORT            ; Change the display
         ; Sleep for some time before continuing so RC doesn't get swamped
         mov #$06,T2SC           ; Timer 1 Started
         brclr 7,T2SC,$          ; Loop if the timer isn't done (bit 7 of T1SC==0)
