@@ -34,7 +34,7 @@ ADC_ENABLE EQU $00
 
 ; Gyroscope Constants
 GYRO_DEGS_HIGH EQU 0t
-GYRO_DEGS_LOW EQU 27t
+GYRO_DEGS_LOW EQU 28t
 
 **************************************************************
 **************************************************************
@@ -49,6 +49,12 @@ TempWord1:
 TempWord2:
         ds $02
 TempLWord:
+        ds $04
+ITempWord1:
+        ds $02
+ITempWord2:
+        ds $02
+ITempLWord:
         ds $04
 AbsoluteX:
         ds $04
@@ -75,6 +81,8 @@ NumQuadErrors:
 RobotTheta:
         ds $04
 GyroValNeg:
+        ds $01
+TempGyroVal:
         ds $01
 
 **************************************************************
@@ -311,6 +319,63 @@ UMult16_3:
         pula
         rts
 
+**************************************************************
+* IUMult16 - Unsigned 16x16 multiply (for interrupts)
+**************************************************************
+IUMult16:
+        ; Save registers that we're going to use
+        psha
+        pshh
+        pshx
+        ais #-6                 ; Reserve 6 bytes on stack for local storage
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate first intermediate result
+        ldx {ITempWord1+1}       ; Load X with multiplier LSB
+        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta {ITempLWord+3}       ; Store LSB of final result
+        ldx ITempWord1           ; Load X with multiplier MSB
+        lda {ITempWord2+1}       ; Load A with multiplicand LSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 2,SP                ; Store 2nd byte of interm. result 1
+        bcc IUMult16_2           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 1
+IUMult16_2:
+        stx 1,SP                ; Store MSB of interm. result 1
+        clr 6,SP                ; Clear the byte used for multiplication carry
+        ; Calculate second intermediate result
+        ldx {ITempWord1+1}       ; Load X with multiplier LSB
+        lda ITempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        stx 6,SP                ; Save carry from multiply
+        sta 5,SP                ; Store LSB of interm. result 2
+        ldx ITempWord1           ; Load X with multiplier MSB
+        lda ITempWord2           ; Load A with multiplicand MSB
+        mul                     ; Multiply
+        add 6,SP                ; Add carry from previous multiply
+        sta 4,SP                ; Store 2nd byte of interm. result 2
+        bcc IUMult16_3           ; Check for carry from addition
+        incx                    ; Increment MSB of interm. result 2
+IUMult16_3:
+        stx 3,SP                ; Store MSB of interm. result 2
+        ; Add interm. result 1 & 2 and store total in TempLWord
+        lda 2,SP                ; Load A with 2nd byte of result 1
+        add 5,SP                ; Add LSB of result 2
+        sta {ITempLWord+2}       ; Store 2nd byte of final result
+        lda 1,SP                ; Load A with MSB of result 1
+        adc 4,SP                ; Add w/carry 2nd byte of result 2
+        sta {ITempLWord+1}       ; Store 3rd byte of final result
+        lda 3,SP                ; Load A with MSB from result 2
+        adc #0                  ; Add carry from previous result
+        sta ITempLWord           ; Store MSB of final result
+        ; Restore registers
+        ais #6                  ; Deallocate local storage from stack
+        pulx
+        pulh
+        pula
+        rts
 
 
 
@@ -383,6 +448,9 @@ MainLoop:
         bsr SendByte
         lda AbsoluteX+3
         bsr SendByte
+        
+        ;;debug
+        bra MainLoop
 
         lda #$59                ; ASCII 'Y'
         bsr SendByte
@@ -394,14 +462,25 @@ MainLoop:
         bsr SendByte
         lda AbsoluteY+3
         bsr SendByte
-        lda #$45                ; ASCII 'G'
+        
+        lda #$47                ; ASCII 'G'
+        bsr SendByte
+        clra
+        bsr SendByte
+        bsr SendByte
+        lda TempGyroVal
+        bsr SendByte
+        clra
+        bsr SendByte
+
+        lda #$45                ; ASCII 'E'
         bsr SendByte
         clra
         bsr SendByte
         bsr SendByte
         lda {RobotTheta+1}
         bsr SendByte
-        clra
+        lda {RobotTheta+2}
         bsr SendByte
 
         bra MainLoop            ; Do it all over again
@@ -431,9 +510,11 @@ ReadPhotos:
 ReadPot:
         lda #ADC_POT_CHAN       ; Load the channel # that the pot is on
         ora #ADC_ENABLE         ; Set the enable bit
+        sei                     ; Turn off interrupts
         sta ADSCR               ; Start an ADC conversion on the pot chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
+        cli
         rts
 
 **************************************************************
@@ -618,9 +699,11 @@ GyroIsr:
         sta ADSCR               ; Start an ADC conversion on the gyro chanel
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read gyro value
-        sub #127t               ; Convert so it's centered around 0
-        cmp #0t
+        sta TempGyroVal
+        sub #126t               ; Convert so it's centered around 0
+        cmp #1t
         bgt GyroPositive        ; Turning in a positive direction
+        cmp #-1t
         blt GyroNegative        ; Turning in a negative direction
         bra GyroDone            ; Not turning at all
 GyroNegative:
@@ -628,26 +711,26 @@ GyroNegative:
         nega                    ; Convert offset to a positive number for
                                 ;   processing
 GyroPositive:
-        clr TempWord1
-        sta {TempWord1+1}       ; Store A in multiplier
-        mov #GYRO_DEGS_HIGH,TempWord2
-        mov #GYRO_DEGS_LOW,{TempWord2+1}
-        jsr UMult16             ; Multiply gyro offset by (binary degrees
+        clr ITempWord1
+        sta {ITempWord1+1}      ; Store A in multiplier
+        mov #GYRO_DEGS_HIGH,ITempWord2
+        mov #GYRO_DEGS_LOW,{ITempWord2+1}
+        jsr IUMult16            ; Multiply gyro offset by (binary degrees
                                 ;   per tick per sample)
         lda GyroValNeg          ; Check to see if we need to add or subtract
         bne GyroSubtract        ; Need to subtract
 
         ; Add new offset to current angular position
-        lda {TempLWord+3}       ; Load LSB of offset
+        lda {ITempLWord+3}      ; Load LSB of offset
         add {RobotTheta+3}      ; Add LSB of RobotTheta
         sta {RobotTheta+3}      ; Store result
-        lda {TempLWord+2}       ; Load 2nd byte of offset
+        lda {ITempLWord+2}      ; Load 2nd byte of offset
         adc {RobotTheta+2}      ; Add 2nd byte of RobotTheta + carry
         sta {RobotTheta+2}      ; Store result
-        lda {TempLWord+1}       ; Load 3rd byte of offset
+        lda {ITempLWord+1}      ; Load 3rd byte of offset
         adc {RobotTheta+1}      ; Add carry from 2nd byte to 3rd byte
         sta {RobotTheta+1}      ; Store result
-        lda TempLWord           ; Load MSB of offset
+        lda ITempLWord          ; Load MSB of offset
         adc RobotTheta          ; Add carry from 3rd byte to MSB
         sta RobotTheta          ; Store result
         bra GyroDone            ; Go do the Y component now
@@ -655,16 +738,16 @@ GyroPositive:
 GyroSubtract:
         ; Subtract new offset from angular position
         lda {RobotTheta+3}      ; Load LSB of RobotTheta
-        sub {TempLWord+3}       ; Subtract LSB of offset
+        sub {ITempLWord+3}      ; Subtract LSB of offset
         sta {RobotTheta+3}      ; Store result
         lda {RobotTheta+2}      ; Load 2nd byte of RobotTheta
-        sbc {TempLWord+2}       ; Subtract 2nd byte of offset and carry bit
+        sbc {ITempLWord+2}      ; Subtract 2nd byte of offset and carry bit
         sta {RobotTheta+2}      ; Store result
         lda {RobotTheta+1}      ; Load 3rd byte of RobotTheta
-        sbc {TempLWord+1}       ; Subtract 3rd byte of offset + carry
+        sbc {ITempLWord+1}      ; Subtract 3rd byte of offset + carry
         sta {RobotTheta+1}      ; Store result
         lda RobotTheta          ; Load MSB of RobotTheta
-        sbc TempLWord           ; Subtract MSB of offset + carry
+        sbc ITempLWord          ; Subtract MSB of offset + carry
         sta RobotTheta          ; Store result
 
 GyroDone:
