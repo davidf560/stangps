@@ -15,26 +15,36 @@
 * ----------------
 * 01/31/03 David Flowerday      Initial version
 * 02/03/03 David Flowerday      Adding support for gyroscope
+* 02/04/03 David Flowerday      Adding support for potentiometer
+* 02/04/03 David Flowerday      Adding support for handling RC requests
 **************************************************************
 
 $INCLUDE 'gpgtregs.inc'         ; Processor defines
 
-RAMStart EQU $0040
-FLASHStart EQU $8000
-VectorStart EQU $FFDC
+; Memory Map Constants
+RAMStart                EQU $0040
+FLASHStart              EQU $8000
+VectorStart             EQU $FFDC
 
-;DISTANCE_RES_LOW EQU 75t
-;DISTANCE_RES_HIGH EQU $0
-DISTANCE_RES_LOW EQU 0t
-DISTANCE_RES_HIGH EQU $1
-PHOTO_SENSOR_PORT EQU PORTD
-ADC_POT_CHAN EQU $1
-ADC_GYRO_CHAN EQU $0
-ADC_ENABLE EQU $00
+; Photo Sensor Constants
+DISTANCE_RES_LOW        EQU 0t
+DISTANCE_RES_HIGH       EQU $1
+PHOTO_SENSOR_PORT       EQU PORTD
+
+; Analog to Digital Converter Constants
+ADC_POT_CHAN            EQU $1
+ADC_GYRO_CHAN           EQU $0
+ADC_ENABLE              EQU $00
+
+; Potentiometer Constants
+POT_CENTER_VAL          EQU 127t
 
 ; Gyroscope Constants
-GYRO_DEGS_HIGH EQU 0t
-GYRO_DEGS_LOW EQU 28t
+GYRO_DEGS_HIGH          EQU 0t
+GYRO_DEGS_LOW           EQU 28t
+
+; Serial Communications Constants
+CC_ATTENTION_BYTE       EQU $00
 
 **************************************************************
 **************************************************************
@@ -95,10 +105,18 @@ TempGyroVal:
         org FLASHStart
 $INCLUDE 'sinetable.inc'
 
+
 **************************************************************
 **************************************************************
-* Constants
+* Quadrature Decoding Functions
 **************************************************************
+**************************************************************
+
+**************************************************************
+* QuadratureTable - This is a jump table used by the
+*                   quadrature decoding algorithm.  It is
+*                   indexed by the previous readings and
+*                   the current readings.
 **************************************************************
 QuadratureTable:
         ; This is a lookup table used by the quadrature
@@ -119,12 +137,6 @@ QuadratureTable:
         jmp QDecrement          ; 11 01 -> Reverse rotation
         jmp QIncrement          ; 11 10 -> Forward rotation
         jmp QNoChange           ; 00 00 -> No change
-
-**************************************************************
-**************************************************************
-* Quadrature Decoding Functions
-**************************************************************
-**************************************************************
 
 **************************************************************
 * QNoChange - There was no change in the light sensor
@@ -202,7 +214,7 @@ InitSCI:
 ;        mov #$04,SCBR           ; Baud Rate = 9600 (at 9.8MHz clock)
         mov #$02,SCBR           ; Baud Rate = 38400 (at 9.8MHz clock)
         mov #$40,SCC1           ; Enable the SCI peripheral
-        mov #$08,SCC2           ; Enable the SCI for TX only
+        mov #$2C,SCC2           ; Enable the SCI for TX and RX
         mov #$00,SCC3           ; No SCC error interrupts, please
         rts
 
@@ -224,6 +236,7 @@ InitRAM:
         mov #1,{AbsoluteY+1}
         mov #0,{AbsoluteY+2}
         mov #0,{AbsoluteY+3}
+        mov #0,AbsoluteHeading
         mov #0,DeltaX
         mov #0,{DeltaX+1}
         mov #0,DeltaY
@@ -377,9 +390,6 @@ IUMult16_3:
         pula
         rts
 
-
-
-
 **************************************************************
 * GetByte - Get byte and return it in accumulator
 **************************************************************
@@ -398,6 +408,7 @@ SendByte:
         sta SCDR                ; Xmit it our serial port
         rts
 
+
 **************************************************************
 **************************************************************
 * Main - this is the function that will be called upon reset
@@ -414,15 +425,17 @@ Main:
 
         ; Initialize subsystems
         jsr InitPorts           ; Initialize general purpose I/O ports
-        jsr InitSCI             ; Initialize the Serial Comm. Interface
+        jsr InitSCI             ; Initialize the serial comm. interface
         jsr InitRAM             ; Initialize RAM variables
-        jsr InitADC
+        jsr InitADC             ; Initialize the analog to digital converter
         jsr InitGyroTimer       ; Initialize the gyroscope timer
         cli                     ; Enable interrupts
 
 MainLoop:
         jsr ReadPhotos          ; Find our 'Distance Delta'
         jsr ReadPot             ; Find our 'Crab Angle'
+        jsr ComputeHeading      ; Compute heading using our 'Crab Angle'
+                                ; and our 'Robot Theta'
 
         ;; DEBUG
         lda #0t
@@ -515,6 +528,19 @@ ReadPot:
         brclr 7,ADSCR,$         ; Wait until ADC conversion is complete
         lda ADR                 ; Read ADC value
         cli
+        rts
+
+**************************************************************
+* ComputeHeading - Using 'Robot Theta' and 'Crab Angle',
+*                  calculate our heading
+*                  Args: Crab angle in A, Robot Theta in
+*                  global variable
+*                  Returns: Heading in A
+**************************************************************
+ComputeHeading:
+        sub #POT_CENTER_VAL     ; Center our pot reading around 0
+        add {RobotTheta+1}      ; Add in our robot's orientation
+                                ; (measured in "binary degrees")
         rts
 
 **************************************************************
@@ -753,14 +779,33 @@ GyroSubtract:
 GyroDone:
         rti
 
-
+**************************************************************
+* RCRequestIsr - used when the Robot Controller requests a
+*                positioning update
+**************************************************************
+RCRequestIsr:
+        jsr GetByte             ; Read the byte that was sent to us
+        cmp #CC_ATTENTION_BYTE  ; Compare it to our attention byte
+        bne RCRequestDone       ; Not for us - ignore it
+        
+        ; RC has requested that we send position data, so we'll
+        ; do just that
+        lda {AbsoluteX+2}       ; Load LSB of integer portion of X
+        jsr SendByte            ; Send it out
+        lda {AbsoluteY+2}       ; Load LSB of integer portion of Y
+        jsr SendByte            ; Send it out
+        lda {RobotTheta+1}      ; Load LSB of integer portion of Theta
+        jsr SendByte            ; Send it out
+RCRequestDone:
+        rti
+        
+        
 **************************************************************
 * DummyIsr - used when we don't want to do anything in
 *            response to an interrupt type
 **************************************************************
 DummyIsr:
         rti
-
 
 **************************************************************
 **************************************************************
@@ -774,7 +819,7 @@ DummyIsr:
         dw DummyIsr             ; ADC Conversion Complete
         dw DummyIsr             ; Keyboard Vector
         dw DummyIsr             ; SCI Transmit Vector
-        dw DummyIsr             ; SCI Receive Vector
+        dw RCRequestIsr         ; SCI Receive Vector
         dw DummyIsr             ; SCI Error Vector
         dw DummyIsr             ; SPI Transmit Vector
         dw DummyIsr             ; SPI Receive Vector
